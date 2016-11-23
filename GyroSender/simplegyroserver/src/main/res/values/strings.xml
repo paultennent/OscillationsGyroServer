@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">SimpleGyroServer</string>
+    <string name="service_name">Gyro NFC service</string>
+    <string name="aid_group_description">Gyro NFC service AID</string>
+</resources>

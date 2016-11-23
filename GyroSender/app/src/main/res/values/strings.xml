@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">GyroSender</string>
+    <string name="title_activity_gyro_receiver">GyroReceiver</string>
+    <string name="title_activity_latency_checker">LatencyChecker</string>
+</resources>
