@@ -454,7 +454,7 @@ public class GyroServerService extends Service implements SensorEventListener
 
     public void onGyroData(SensorEvent event)
     {
-        float sensorY=event.values[1];
+        float sensorY=event.values[0];
         mAngularVelocity=sensorY;
         // send this somewhere
         if(Math.abs(sensorY)<0.01)
@@ -517,7 +517,7 @@ public class GyroServerService extends Service implements SensorEventListener
         SensorManager.getRotationMatrixFromVector(mRotationMatrix,event.values);
         SensorManager.getOrientation(mRotationMatrix,mOrientation);
         // TODO maybe get mag from here?
-        float roll=mOrientation[2];
+        float roll=-mOrientation[1];
         mAccelCorrectionAmount=roll-mAngle;
         sCorrectionAmountDebug=mAccelCorrectionAmount;
         //mAngle=0.998f*mAngle+0.002f*roll;
