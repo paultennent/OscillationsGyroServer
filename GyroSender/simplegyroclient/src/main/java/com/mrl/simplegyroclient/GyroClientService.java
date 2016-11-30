@@ -257,6 +257,11 @@ public class GyroClientService extends Service
                 }
             }
 
+            if((connectionState&3)==0)
+            {
+                tryBTConnection=true;
+            }
+
             // we would try bt connection any time it is dropped, but it causes jitters if we do
             // so only do on startup or settings change
             if(tryBTConnection && (btConnection==null || btConnection.isConnected()==false))
@@ -290,14 +295,10 @@ public class GyroClientService extends Service
                 } catch(IOException e)
                 {
                     Log.d("poll","failed");
-                    // poll failed
-//                    e.printStackTrace();
                 }
             }
             try
             {
-
-
                 try
                 {
                     Thread.sleep(1);
@@ -326,26 +327,6 @@ public class GyroClientService extends Service
                 {
                     if(btConnection!=null)loopsSinceLastBT+=1;
                 }
-/*                if(loopsSinceLastBT>1000 && btConnection!=null)
-                {
-                    loopsSinceLastBT=0;
-                    try
-                    {
-                        if(btInputStream!=null)
-                        {
-                            btInputStream.close();
-                        }
-                        if(btConnection!=null)
-                        {
-                            btConnection.close();
-                        }
-                    }catch(IOException e2)
-                    {
-                        e2.printStackTrace();
-                    }
-                    btInputStream=null;
-                    btConnection=null;
-                }*/
                 dataPacket.rewind();
                 SocketAddress serverAddr = remoteConnection.receive(dataPacket);
                 if(serverAddr!=null)
