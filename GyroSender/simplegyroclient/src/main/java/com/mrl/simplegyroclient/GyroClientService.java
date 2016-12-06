@@ -121,8 +121,19 @@ public class GyroClientService extends Service
                 inputStream = connection.getInputStream();
             } catch(IOException e)
             {
-                 e.printStackTrace();
-                if(connection != null && connection.isConnected())
+                Log.d("bt","can't connect");
+//                 e.printStackTrace();
+                if(inputStream!=null)
+                {
+                    try
+                    {
+                        inputStream.close();
+                    } catch(IOException e1)
+                    {
+                        e1.printStackTrace();
+                    }
+                }
+                if(connection != null)
                 {
                     try
                     {
@@ -131,16 +142,9 @@ public class GyroClientService extends Service
                     {
                         e1.printStackTrace();
                     }
-                    try
-                    {
-                        inputStream.close();
-                    } catch(IOException e1)
-                    {
-                        e1.printStackTrace();
-                    }
-                    connection = null;
-                    inputStream = null;
                 }
+                connection = null;
+                inputStream = null;
             }
 
         }
@@ -204,7 +208,7 @@ public class GyroClientService extends Service
 
         BluetoothManager mg= (BluetoothManager) getSystemService(BLUETOOTH_SERVICE);
         BluetoothAdapter adp = mg.getAdapter();
-        ByteBuffer dataPacket=ByteBuffer.allocate(28);
+        ByteBuffer dataPacket=ByteBuffer.allocate(32);
 
 
         ByteBuffer pollPacket=ByteBuffer.allocate(4);
@@ -259,6 +263,18 @@ public class GyroClientService extends Service
 
             if((connectionState&3)==0)
             {
+                if(btConnection!=null && btConnection.isConnected())
+                {
+                    try
+                    {
+                        btConnection.close();
+                        btConnection=null;
+                    } catch(IOException e)
+                    {
+                        e.printStackTrace();
+                    }
+                }
+//                Log.d("bt","connectionState-check:"+btConnection+":"+btConnection.isConnected());
                 tryBTConnection=true;
             }
 
@@ -271,6 +287,7 @@ public class GyroClientService extends Service
                 {
                     btConnector=new BTClientConnector(adp,mBTAddr.toUpperCase());
                     btConnector.start();
+                    Log.d("bt","try bt connection");
                 }else
                 {
                     // when the connection thread dies, we may or may not have a good connection
@@ -347,7 +364,7 @@ public class GyroClientService extends Service
                         }
                     }
                 }
-                if(sendErrorCounter > 1000 && !mQuitting)
+                if(sendErrorCounter > 1000 && !mQuitting && false)
                 {
                     Log.d("snd", "failed for 1000 messages , shutting down");
                     mQuitting=true;
@@ -405,9 +422,10 @@ public class GyroClientService extends Service
     boolean dispatchPacket(DatagramChannel localConnection,ByteBuffer dataPacket)
     {
         long curTime=System.currentTimeMillis();
-        if(messageCount==0)
+        if(messageCount==0 || (sConnectionState&3)==0)
         {
             timeStart=curTime;
+            messageCount=0;
 
         }else
         {
@@ -429,6 +447,7 @@ public class GyroClientService extends Service
         }
 
         dataPacket.putFloat(24,batteryPercent);
+        dataPacket.putInt(28,sConnectionState);
         try
         {
             dataPacket.rewind();
