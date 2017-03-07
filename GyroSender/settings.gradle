@@ -1,1 +1,1 @@
-include ':app', ':simplegyroserver', ':simplegyroclient'
+include  ':simplegyroserver', ':simplegyroclient', ':flashcamerasource'

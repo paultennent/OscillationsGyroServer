@@ -1,34 +1,49 @@
 package com.mrl.simplegyroclient;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
-import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.media.AudioManager;
 import android.media.ToneGenerator;
 import android.nfc.NdefMessage;
 import android.nfc.NfcAdapter;
 import android.nfc.Tag;
-import android.nfc.tech.IsoDep;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Parcelable;
+import android.support.v4.app.ActivityCompat;
 import android.util.Log;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 
-import java.io.IOException;
+import com.mrl.flashcamerasource.BarcodeReader;
+import com.mrl.flashcamerasource.ClientWifiSelector;
+
 import java.io.UnsupportedEncodingException;
 import java.util.Locale;
 
 public class GyroClientStarter extends Activity implements NfcAdapter.ReaderCallback
 {
     Handler m_Handler;
+    BarcodeReader m_CodeReader=new BarcodeReader();
 
     @Override
     protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
+
+        if(ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) !=
+                PackageManager.PERMISSION_GRANTED )
+        {
+            String[] perms={Manifest.permission.READ_EXTERNAL_STORAGE};
+            ActivityCompat.requestPermissions(this,perms,0);
+        }
+
 
         m_Handler=new Handler();
         setContentView(R.layout.activity_gyro_reader);
@@ -49,7 +64,7 @@ public class GyroClientStarter extends Activity implements NfcAdapter.ReaderCall
                     try
                     {
                         String targetAddress = new String(nmsgs[i].getRecords()[0].getPayload(), "UTF8");
-                        GyroClientService.setSettingsFromText(this,targetAddress);
+                        GyroClientService.setSettingsFromText(this,targetAddress,false);
                     } catch(UnsupportedEncodingException e)
                     {
                         Log.e("utf decode", e.getMessage());
@@ -64,6 +79,15 @@ public class GyroClientStarter extends Activity implements NfcAdapter.ReaderCall
 
     public void checkServiceStatus()
     {
+        if(m_CodeReader.isReading())
+        {
+            if(m_CodeReader.getDetectedCode()!=null)
+            {
+                ClientWifiSelector sel=new ClientWifiSelector();
+                sel.SelectNetworkForBarcode(this,m_CodeReader.getDetectedCode());
+                m_CodeReader.stopReading();
+            }
+        }
         TextView tv=(TextView)findViewById(R.id.status_text);
         Button b=(Button)findViewById(R.id.launch_button);
         if(b==null || tv==null)
@@ -92,10 +116,18 @@ public class GyroClientStarter extends Activity implements NfcAdapter.ReaderCall
 
     }
 
+    public void startBarcodeScanning()
+    {
+//        ClientWifiSelector sel=new ClientWifiSelector();
+//        sel.SelectNetworkForBarcode(this,"020379056892");
+        m_CodeReader.startReading(this);
+    }
+
     @Override
     public void onDestroy()
     {
         m_Handler.removeCallbacksAndMessages(null);
+        m_CodeReader.stopReading();
         super.onDestroy();
     }
 
@@ -136,4 +168,26 @@ public class GyroClientStarter extends Activity implements NfcAdapter.ReaderCall
         }
 
     }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+
+        MenuInflater inflater = getMenuInflater();
+        inflater.inflate(R.menu.launcher_actions, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item)
+    {
+        if(item.getItemId()==R.id.barcode_test)
+        {
+            startBarcodeScanning();
+            return true;
+        }else
+        {
+            return super.onOptionsItemSelected(item);
+        }
+    }
+
 }

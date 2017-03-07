@@ -16,22 +16,17 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.media.AudioManager;
 import android.media.ToneGenerator;
-import android.net.wifi.WifiManager;
-import android.os.BatteryManager;
-import android.os.Handler;
-import android.os.HandlerThread;
-import android.os.IBinder;
+import android.os.*;
 import android.util.Log;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.math.BigInteger;
+import com.mrl.flashcamerasource.ServiceWifiChecker;
+
+import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.channels.DatagramChannel;
-import java.util.Enumeration;
+import java.util.Calendar;
+import java.util.TimeZone;
 import java.util.UUID;
 
 public class GyroServerService extends Service implements SensorEventListener
@@ -45,6 +40,11 @@ public class GyroServerService extends Service implements SensorEventListener
     final static public int PACKET_SIZE=24;
     final static public UUID BLUETOOTH_UUID =
             UUID.fromString("ad91f8d4-e6ea-4f57-be70-4f9802ebc619");
+
+    public static int sSwingID=-1;
+    public static int sWifiNum=-1;
+
+
     public static boolean sRunning=false;
     public static int sConnectionState=0;
     public static float sAngleDebug=0;
@@ -66,7 +66,6 @@ public class GyroServerService extends Service implements SensorEventListener
     public void onCreate()
     {
         sRunning=true;
-        Log.d("woo", "create");
         mSensorThread =new HandlerThread("gyrohandler")
         {
             public void onLooperPrepared()
@@ -389,13 +388,34 @@ public class GyroServerService extends Service implements SensorEventListener
 
     void listenUDP()
     {
+        if(sSwingID==-1)
+        {
+            getSwingID(this);
+        }
         try
         {
+            dataRead.clear();
             SocketAddress addr=mUDPConnection.receive(dataRead);
-            if(dataRead.get(0)==72 && dataRead.get(1)==105)
+            if(addr!=null && dataRead.position()>=2)
             {
-                mUDPTarget = addr;
-                mUDPLastPingTime = System.currentTimeMillis();
+                dataRead.flip();
+                // 'Hi' = send to this address
+                if(dataRead.get(0) == 72 && dataRead.get(1) == 105)
+                {
+                    mUDPTarget = addr;
+                    mUDPLastPingTime = System.currentTimeMillis();
+                }
+                // 'Qnn' = query swing id n
+                if(dataRead.get(0) == 81 && dataRead.get(1) == 48 + (sSwingID / 10) &&
+                        dataRead.get(2) == 48 + (sSwingID % 10))
+                {
+                    // send a response to give our IP address and bluetooth ID
+                    // send getSettingsString(this) to them
+                    String queryResponse = getSettingsString(this);
+                    byte[] bytes = queryResponse.getBytes("UTF-8");
+                    mUDPConnection.send(ByteBuffer.wrap(bytes), addr);
+                    Log.e("query","send response:"+queryResponse);
+                }
             }
         } catch(IOException e)
         {
@@ -653,7 +673,11 @@ public class GyroServerService extends Service implements SensorEventListener
             mLastListenTimestamp=mTimestamp;
             listenBluetooth();
             listenUDP();
-            Log.d("gyro","sensor:"+mAngle+":"+mAngularVelocity+":"+mAccelCorrectionAmount);
+            //Log.d("gyro","sensor:"+mAngle+":"+mAngularVelocity+":"+mAccelCorrectionAmount);
+            if(sWifiNum!=-1)
+            {
+                ServiceWifiChecker.checkWifi(this,sWifiNum);
+            }
         }
         // get battery every 10 seconds
         if(mTimestamp-mLastBatteryTimestamp>10000000000L)
@@ -670,58 +694,31 @@ public class GyroServerService extends Service implements SensorEventListener
 
     }
 
-    public static String wifiIpAddress(Context ctx) {
-        WifiManager wifiManager = (WifiManager) ctx.getSystemService(WIFI_SERVICE);
-        int ipAddress = wifiManager.getConnectionInfo().getIpAddress();
-
-        // Convert little-endian to big-endianif needed
-        if (ByteOrder.nativeOrder().equals(ByteOrder.LITTLE_ENDIAN)) {
-            ipAddress = Integer.reverseBytes(ipAddress);
-        }
-
-        byte[] ipByteArray = BigInteger.valueOf(ipAddress).toByteArray();
-
-        String ipAddressString;
-        try {
-            ipAddressString = InetAddress.getByAddress(ipByteArray).getHostAddress();
-        } catch (UnknownHostException ex) {
-            Log.e("WIFIIP", "Unable to get host address.");
-            // check if we're an access point
-            ipAddressString="192.168.43.1";
-            try
-            {
-                for(Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces();
-                    en.hasMoreElements(); )
-                {
-                    NetworkInterface ni=en.nextElement();
-                    if(!ni.isLoopback() && !ni.isPointToPoint() && ni.isUp() && !ni.isVirtual())
-                    {
-                        for (Enumeration<InetAddress> enumIpAddr = ni.getInetAddresses();
-                             enumIpAddr.hasMoreElements(); )
-                        {
-                            InetAddress ad=enumIpAddr.nextElement();
-                            if(ad.getHostAddress()!="" && ad.getAddress().length==4)
-                            {
-                                ipAddressString=ad.getHostAddress();
-                            }
-                        }
-                    }
-                }
-            } catch(SocketException e)
-            {
-                e.printStackTrace();
-            }
-        }
-
-        return ipAddressString;
-    }
-
     public static String getBluetoothMac(Context ctx)
     {
         if(mBluetoothMAC==null)
         {
             SharedPreferences settings = ctx.getSharedPreferences(PREFS_NAME, 0);
             mBluetoothMAC=settings.getString("BluetoothMAC",null);
+        }
+        if(mBluetoothMAC==null)
+        {
+            String path= Environment.getExternalStorageDirectory()+"/btmac.txt";
+            File file = new File(path);
+            try
+            {
+                if(file.exists())
+                {
+                    BufferedReader br = new BufferedReader(new FileReader(path));
+                    String macAddr = null;
+                    macAddr = br.readLine();
+                    mBluetoothMAC = macAddr.trim();
+                    setBluetoothMac(ctx, mBluetoothMAC);
+                }
+            }catch(IOException e)
+            {
+                e.printStackTrace();
+            }
         }
         return mBluetoothMAC;
     }
@@ -735,9 +732,50 @@ public class GyroServerService extends Service implements SensorEventListener
         edit.commit();
     }
 
+    public static int getSwingID(Context ctx)
+    {
+        if(sSwingID==-1)
+        {
+            SharedPreferences settings = ctx.getSharedPreferences(PREFS_NAME, 0);
+            sSwingID=settings.getInt("SwingID",-1);
+        }
+        return sSwingID;
+    }
+
+    public static void setSwingId(Context ctx,int id)
+    {
+        id=id%100;
+        sSwingID=id;
+        SharedPreferences settings = ctx.getSharedPreferences(PREFS_NAME, 0);
+        SharedPreferences.Editor edit=settings.edit();
+        edit.putInt("SwingID",id);
+        Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+        long curTime=cal.getTimeInMillis();
+        edit.putLong("CodeScanTime",curTime);// we use the current time to make sure that the
+                                            //last scanned device on the swing seat has priority
+        edit.commit();
+    }
+
+    public static void setWifiNum(Context ctx,int num)
+    {
+        sWifiNum=num;
+    }
+
+    public static int getWifiNum(Context ctx)
+    {
+        return sWifiNum;
+    }
+
+    public static long getCodeScanTime(Context ctx)
+    {
+        SharedPreferences settings = ctx.getSharedPreferences(PREFS_NAME, 0);
+        return settings.getLong("CodeScanTime",0);
+
+    }
+
     public static String getSettingsString(Context ctx)
     {
-        return wifiIpAddress(ctx)+","+UDP_PORT+","+getBluetoothMac(ctx);
+        return ServiceWifiChecker.wifiIPAddress(ctx)+","+UDP_PORT+","+getBluetoothMac(ctx)+","+getSwingID(ctx)+","+getCodeScanTime(ctx);
     }
 
 

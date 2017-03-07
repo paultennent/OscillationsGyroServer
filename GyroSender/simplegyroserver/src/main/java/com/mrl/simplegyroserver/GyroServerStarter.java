@@ -1,17 +1,18 @@
 package com.mrl.simplegyroserver;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
-import android.content.SharedPreferences;
-import android.net.wifi.WifiManager;
+import android.content.pm.PackageManager;
 import android.nfc.NdefMessage;
 import android.nfc.NdefRecord;
 import android.nfc.NfcAdapter;
 import android.nfc.NfcEvent;
 import android.os.Bundle;
 import android.os.Handler;
+import android.support.v4.app.ActivityCompat;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -21,17 +22,15 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 
-import java.math.BigInteger;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
-import java.net.UnknownHostException;
-import java.nio.ByteOrder;
+import com.mrl.flashcamerasource.BarcodeReader;
+import com.mrl.flashcamerasource.ServiceWifiChecker;
+
 import java.nio.charset.StandardCharsets;
-import java.util.Enumeration;
 
 public class GyroServerStarter extends Activity
 {
+
+    BarcodeReader m_CodeReader=new BarcodeReader();
 
     Handler m_Handler;
 
@@ -61,17 +60,25 @@ public class GyroServerStarter extends Activity
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_gyro_starter);
 
+        if(ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) !=
+                PackageManager.PERMISSION_GRANTED || ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
+                PackageManager.PERMISSION_GRANTED)
+        {
+            String[] permissions={Manifest.permission.READ_EXTERNAL_STORAGE,Manifest.permission.CAMERA};
+            ActivityCompat.requestPermissions(this,permissions,0);
+        }else
+        {
+            afterCheckedPermissions();
+        }
+    }
 
-
+    public void afterCheckedPermissions()
+    {
         String bluetoothMAC=GyroServerService.getBluetoothMac(this);
         if(bluetoothMAC==null || bluetoothMAC.length()==0)
         {
             setBluetoothMAC();
         }
-
-        TextView tv=(TextView)findViewById(R.id.info_text);
-        final String ipAddr=GyroServerService.wifiIpAddress(this);
-        tv.setText("Address: "+ipAddr+":"+ GyroServerService.UDP_PORT+"\n"+"BT:"+bluetoothMAC);
 
         // set NDEF record
         NfcAdapter nfcAdapter = NfcAdapter.getDefaultAdapter(this);
@@ -86,7 +93,33 @@ public class GyroServerStarter extends Activity
             startService(intent);
         }
 
+        m_CodeReader.startReading(this);
+
         checkServiceStatus();
+
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                           int[] grantResults)
+    {
+        boolean requestAgain=false;
+        for(int c=0;c<grantResults.length;c++)
+        {
+            if(grantResults[c]!=PackageManager.PERMISSION_GRANTED)
+            {
+                requestAgain=true;
+            }
+        }
+        if(requestAgain)
+        {
+            String[] newPermissions={Manifest.permission.READ_EXTERNAL_STORAGE,Manifest.permission.CAMERA};
+            ActivityCompat.requestPermissions(this,newPermissions,0);
+        }else
+        {
+            afterCheckedPermissions();
+        }
+
     }
 
     @Override
@@ -130,6 +163,46 @@ public class GyroServerStarter extends Activity
 
     public void checkServiceStatus()
     {
+        if(m_CodeReader.isReading())
+        {
+            String code=m_CodeReader.getDetectedCode();
+            if(code!=null)
+            {
+                // check if it is a valid code
+                try
+                {
+                    String withoutCheck=code.substring(0,code.length()-1);
+                    int value = (int)(Long.parseLong(withoutCheck) % (10000000));
+                    if(value>1000000)
+                    {
+                        // connect to the right wifi network - this codescheme allows for 100 wifis and any number of swings
+                        int wifiNum=(value-1000000)%(1000);
+                        int swingID=(value-1000000)/1000;
+                        GyroServerService.setSwingId(this,swingID);
+                        GyroServerService.setWifiNum(this,wifiNum);
+                        m_CodeReader.stopReading();
+                    }
+                }catch(NumberFormatException e)
+                {
+                    e.printStackTrace();
+                }
+            }
+            findViewById(R.id.barcode).setVisibility(View.VISIBLE);
+            findViewById(R.id.launch_button).setVisibility(View.INVISIBLE);
+            findViewById(R.id.status_text).setVisibility(View.INVISIBLE);
+            findViewById(R.id.info_text).setVisibility(View.INVISIBLE);
+        }else
+        {
+            findViewById(R.id.barcode).setVisibility(View.INVISIBLE);
+            findViewById(R.id.launch_button).setVisibility(View.VISIBLE);
+            findViewById(R.id.status_text).setVisibility(View.VISIBLE);
+            findViewById(R.id.info_text).setVisibility(View.VISIBLE);
+        }
+        TextView tv_inf=(TextView)findViewById(R.id.info_text);
+        final String ipAddr= ServiceWifiChecker.wifiIPAddress(this);
+        tv_inf.setText("Address: "+ipAddr+":"+ GyroServerService.UDP_PORT+"\n"+"BT:"+GyroServerService.getBluetoothMac(this)+"\n"+GyroServerService.getSettingsString(this ));
+
+
         TextView tv=(TextView)findViewById(R.id.status_text);
         Button b=(Button)findViewById(R.id.launch_button);
         if(b==null || tv==null)
@@ -159,6 +232,7 @@ public class GyroServerStarter extends Activity
     @Override
     public void onDestroy()
     {
+        m_CodeReader.stopReading();
         m_Handler.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
@@ -176,22 +250,5 @@ public class GyroServerStarter extends Activity
         }
     }
 
+
 }
-/*
-// stuff to auto-enable wifi AP
-
-<uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
-<uses-permission android:name="android.permission.WRITE_SETTINGS" />
-
-public void setWiFiApMode(boolean mode) {
-        if (mContext == null) return;
-        WifiManager wifiManager = (WifiManager) mContext.getSystemService(Context.WIFI_SERVICE);
-        if (wifiManager == null) return;
-        try {
-            Method setWifiApEnabled = WifiManager.class.getMethod("setWifiApEnabled", WifiConfiguration.class, boolean.class);
-            setWifiApEnabled.invoke(wifiManager, null, mode);
-        } catch (Exception e) {
-        }
-    }
-
-*/
