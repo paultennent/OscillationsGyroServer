@@ -200,7 +200,8 @@ public class GyroServerStarter extends Activity
         }
         TextView tv_inf=(TextView)findViewById(R.id.info_text);
         final String ipAddr= ServiceWifiChecker.wifiIPAddress(this);
-        tv_inf.setText("Address: "+ipAddr+":"+ GyroServerService.UDP_PORT+"\n"+"BT:"+GyroServerService.getBluetoothMac(this)+"\n"+GyroServerService.getSettingsString(this ));
+        tv_inf.setText("Address: "+ipAddr+":"+ GyroServerService.UDP_PORT+"\n"+"BT:"+GyroServerService.getBluetoothMac(this)+"\n"+GyroServerService.getSettingsString(this )
+        +"\nWifi number:"+GyroServerService.getWifiNum(this)+"\n"+"swing num:"+GyroServerService.getSwingID(this));
 
 
         TextView tv=(TextView)findViewById(R.id.status_text);

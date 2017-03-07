@@ -96,8 +96,8 @@ public class GyroClientStarter extends Activity implements NfcAdapter.ReaderCall
         }
         if(GyroClientService.sRunning)
         {
-            tv.setText(String.format(Locale.ENGLISH,"Receiver service running:%2d:%2.2f (%2.2f mps)\n%s",GyroClientService.sConnectionState,GyroClientService.mAngleDebug
-            ,GyroClientService.sMessagesPerSecond,GyroClientService.sTargetAddr));
+            tv.setText(String.format(Locale.ENGLISH,"Receiver service running:%2d:%2.2f (%2.2f mps)\n%s\nWifi number: %d\nswing num:%d",GyroClientService.sConnectionState,GyroClientService.mAngleDebug
+            ,GyroClientService.sMessagesPerSecond,GyroClientService.sTargetAddr,GyroClientService.sWifiNum,GyroClientService.sSwingNum));
 
             b.setText("Stop Receive");
         }else
@@ -112,7 +112,7 @@ public class GyroClientStarter extends Activity implements NfcAdapter.ReaderCall
             {
                 checkServiceStatus();
             }
-        }, 10);
+        }, 100);
 
     }
 
