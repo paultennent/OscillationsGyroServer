@@ -96,8 +96,13 @@ public class GyroClientStarter extends Activity implements NfcAdapter.ReaderCall
         }
         if(GyroClientService.sRunning)
         {
-            tv.setText(String.format(Locale.ENGLISH,"Receiver service running:%2d:%2.2f (%2.2f mps)\n%s\nWifi number: %d\nswing num:%d",GyroClientService.sConnectionState,GyroClientService.mAngleDebug
-            ,GyroClientService.sMessagesPerSecond,GyroClientService.sTargetAddr,GyroClientService.sWifiNum,GyroClientService.sSwingNum));
+            String wifiName="None";
+            if(GyroClientService.sWifiNum!=-1)
+            {
+                wifiName=Character.toString((char)('A'+GyroClientService.sWifiNum));
+            }
+            tv.setText(String.format(Locale.ENGLISH,"Receiver service running:%2d:%2.2f (%2.2f mps)\n%s\nWifi name: %s\nswing num:%d",GyroClientService.sConnectionState,GyroClientService.mAngleDebug
+            ,GyroClientService.sMessagesPerSecond,GyroClientService.sTargetAddr,wifiName,GyroClientService.sSwingNum));
 
             b.setText("Stop Receive");
         }else
@@ -148,6 +153,13 @@ public class GyroClientStarter extends Activity implements NfcAdapter.ReaderCall
     {
         if(!GyroClientService.sRunning)
         {
+            if(com.mrl.simplegyroserver.GyroServerService.sRunning)
+            {
+                Intent intent= new Intent(getBaseContext(), com.mrl.simplegyroserver.GyroServerService.class);
+                stopService(intent);
+            }
+
+
             Intent intent= new Intent(getBaseContext(), GyroClientService.class);
             startService(intent);
         }else

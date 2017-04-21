@@ -22,6 +22,9 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 
+import com.mrl.simplegyroclient.GyroClientService;
+import com.mrl.simplegyroclient.R;
+
 import com.mrl.flashcamerasource.BarcodeReader;
 import com.mrl.flashcamerasource.ServiceWifiChecker;
 
@@ -89,6 +92,12 @@ public class GyroServerStarter extends Activity
 
         if(!GyroServerService.sRunning)
         {
+            if(com.mrl.simplegyroclient.GyroClientService.sRunning)
+            {
+                Intent intent= new Intent(getBaseContext(), com.mrl.simplegyroclient.GyroClientService.class);
+                stopService(intent);
+            }
+
             Intent intent = new Intent(getBaseContext(), GyroServerService.class);
             startService(intent);
         }
@@ -126,16 +135,16 @@ public class GyroServerStarter extends Activity
     public boolean onCreateOptionsMenu(Menu menu) {
 
         MenuInflater inflater = getMenuInflater();
-        inflater.inflate(R.menu.launcher_actions, menu);
+        inflater.inflate(R.menu.server_launcher_actions, menu);
         return true;
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item)
     {
-        if(item.getItemId()==R.id.set_bluetooth_mac)
+        if(item.getItemId()==R.id.barcode_test)
         {
-            setBluetoothMAC();
+            m_CodeReader.startReading(this);
             return true;
         }else
         {
@@ -200,8 +209,15 @@ public class GyroServerStarter extends Activity
         }
         TextView tv_inf=(TextView)findViewById(R.id.info_text);
         final String ipAddr= ServiceWifiChecker.wifiIPAddress(this);
+        String wifiName="None";
+        if(GyroServerService.sWifiNum!=-1)
+        {
+            wifiName=Character.toString((char)('A'+GyroServerService.sWifiNum));
+        }
+
+
         tv_inf.setText("Address: "+ipAddr+":"+ GyroServerService.UDP_PORT+"\n"+"BT:"+GyroServerService.getBluetoothMac(this)+"\n"+GyroServerService.getSettingsString(this )
-        +"\nWifi number:"+GyroServerService.getWifiNum(this)+"\n"+"swing num:"+GyroServerService.getSwingID(this));
+        +"\nWifi name:"+wifiName+"\n"+"swing num:"+GyroServerService.getSwingID(this));
 
 
         TextView tv=(TextView)findViewById(R.id.status_text);
@@ -242,6 +258,12 @@ public class GyroServerStarter extends Activity
     {
         if(!GyroServerService.sRunning)
         {
+            // stop the client running if we are a server
+            if(com.mrl.simplegyroclient.GyroClientService.sRunning)
+            {
+                Intent intent= new Intent(getBaseContext(), com.mrl.simplegyroclient.GyroClientService.class);
+                stopService(intent);
+            }
             Intent intent= new Intent(getBaseContext(), GyroServerService.class);
             startService(intent);
         }else

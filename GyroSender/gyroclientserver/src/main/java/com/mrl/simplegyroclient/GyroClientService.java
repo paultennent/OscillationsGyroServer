@@ -2,6 +2,7 @@
 package com.mrl.simplegyroclient;
 
 import android.Manifest;
+import android.app.Notification;
 import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -17,9 +18,11 @@ import android.nfc.tech.IsoDep;
 import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.support.v4.app.ActivityCompat;
 import android.util.Log;
 
+import com.mrl.flashcamerasource.MulticastConnector;
 import com.mrl.flashcamerasource.ServiceWifiChecker;
 
 import java.io.*;
@@ -30,6 +33,7 @@ import java.util.*;
 
 public class GyroClientService extends Service
 {
+
     final static public UUID BLUETOOTH_UUID =
             UUID.fromString("ad91f8d4-e6ea-4f57-be70-4f9802ebc619");
     public static final String PREFS_NAME = "ServicePrefs";
@@ -47,8 +51,9 @@ public class GyroClientService extends Service
 
     boolean mQuitting = false;
 
-
     Thread mServerThread;
+
+    MulticastConnector mConnector;
 
 
     Handler mMainThreadHandler;
@@ -60,6 +65,13 @@ public class GyroClientService extends Service
     @Override
     public void onCreate()
     {
+        mConnector=new MulticastConnector(this,false);
+        Notification noti = new Notification.Builder(this)
+                .setContentTitle("Gyro Client Service running")
+                .setContentText("this phone should be in a headset")
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .build();
+        startForeground(1,noti);
         // check if we have access to the file system
         if(ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) !=
                 PackageManager.PERMISSION_GRANTED )
@@ -87,6 +99,7 @@ public class GyroClientService extends Service
     @Override
     public void onDestroy()
     {
+        mConnector.close();
         mMainThreadHandler.removeCallbacksAndMessages(null);
         mMainThreadHandler = null;
         Log.d("woo", "service stop");
@@ -254,7 +267,7 @@ public class GyroClientService extends Service
 
         boolean tryBTConnection = true;
 
-        boolean needsWifiCheck =true;
+        boolean needsWifiCheck =false;
         boolean settingsFromWifi=false;
 
         while(!mQuitting && !mServerThread.isInterrupted())
@@ -280,6 +293,8 @@ public class GyroClientService extends Service
                         {
                             // need to check wifi again if we don't get a response, otherwise we've found the right swing
                             needsWifiCheck=!connectToSwing(sSwingNum);
+                            // poll only in 2 seconds
+                            udpPollTime=curTime+1000;
                             settingsFromWifi=true;
                         }else
                         {
@@ -453,6 +468,7 @@ public class GyroClientService extends Service
             }
 
         }
+        // ending - close bluetooth
         if(btConnection != null)
         {
             try
@@ -470,6 +486,21 @@ public class GyroClientService extends Service
         if(btConnector != null)
         {
             btConnector.shutdownConnectThread();
+        }
+        // close other sockets
+        try
+        {
+            remoteConnection.close();
+        } catch(IOException e)
+        {
+            e.printStackTrace();
+        }
+        try
+        {
+            localConnection.close();
+        } catch(IOException e)
+        {
+            e.printStackTrace();
         }
     }
 
@@ -493,6 +524,11 @@ public class GyroClientService extends Service
         {
             float timeDiff = (float) ((curTime - timeStart));
             sMessagesPerSecond = (1000.0f * (float) messageCount) / timeDiff;
+            if(timeDiff>2000f)
+            {
+                timeStart=curTime;
+                messageCount=0;
+            }
         }
         messageCount += 1;
         mAngleDebug = dataPacket.getFloat(0);
@@ -538,27 +574,16 @@ public class GyroClientService extends Service
     // returns true if it found this swing ID
     boolean connectToSwing(int swingNum)
     {
-        ByteBuffer response = ByteBuffer.allocate(1024);
-        ByteBuffer queryPacket = ByteBuffer.allocate(4);
-        queryPacket.put((byte) 81);
-        queryPacket.put((byte) (48 + (swingNum / 10)));
-        queryPacket.put((byte) (48 + (swingNum % 10)));
-        queryPacket.flip();
-        InetSocketAddress broadcastAddr = new InetSocketAddress(
-                ServiceWifiChecker.wifiBroadcastAddress(this), 2323);
-        DatagramChannel queryConnection = null;
         boolean foundSwing=false;
-        // send query packet on local broadcast address
-        // when we get responses, set our addresses based on that
-        // only take the one with the highest timestamp
-        // wait for 1 seconds total in case one is a slowcoach
+        byte[] responseBuf=new byte[1024];
+        DatagramPacket responsePacket=new DatagramPacket(responseBuf,responseBuf.length);
+        DatagramChannel queryConnection=null;
         try
         {
             queryConnection = DatagramChannel.open();
-            queryConnection.socket().setSoTimeout(1000);
-            queryConnection.socket().setBroadcast(true);
-            queryConnection.socket().bind(new InetSocketAddress(ServiceWifiChecker.wifiIPAddress(this), 2929));
-            queryConnection.send(queryPacket, broadcastAddr);
+            queryConnection.socket().setSoTimeout(10000);
+            queryConnection.socket().bind(new InetSocketAddress(ServiceWifiChecker.wifiIPAddress(this), 0));
+            mConnector.SendData(String.format("Q%02d:%d",swingNum%100,queryConnection.socket().getLocalPort()));
         } catch(SocketException e1)
         {
             e1.printStackTrace();
@@ -566,26 +591,69 @@ public class GyroClientService extends Service
         {
             e1.printStackTrace();
         }
+
+
+/*        ByteBuffer queryPacket = ByteBuffer.allocate(4);
+        queryPacket.put((byte) 81);
+        queryPacket.put((byte) (48 + (swingNum / 10)));
+        queryPacket.put((byte) (48 + (swingNum % 10)));
+        queryPacket.flip();
+        InetSocketAddress broadcastAddr = new InetSocketAddress(
+                ServiceWifiChecker.wifiBroadcastAddress(this), 2323);
+        DatagramChannel queryConnection = null;
+        // send query packet on local broadcast address
+        // when we get responses, set our addresses based on that
+        // only take the one with the highest timestamp
+        // wait for 1 seconds total in case one is a slowcoach
+        try
+        {
+            queryConnection = DatagramChannel.open();
+            queryConnection.socket().setSoTimeout(10000);
+            queryConnection.socket().setBroadcast(true);
+//            queryConnection.socket().bind(new InetSocketAddress(ServiceWifiChecker.wifiIPAddress(this), 0));
+//            queryConnection.socket().bind(new InetSocketAddress(ServiceWifiChecker.wifiIPAddress(this), 2929));
+            queryConnection.send(queryPacket, broadcastAddr);
+        } catch(SocketException e1)
+        {
+            e1.printStackTrace();
+        } catch(IOException e1)
+        {
+            e1.printStackTrace();
+        }*/
         try
         {
             long endTime = System.currentTimeMillis() + 1000l;
-            while(System.currentTimeMillis() < endTime)
+            while(System.currentTimeMillis() < endTime && !foundSwing)
             {
-                response.clear();
-                SocketAddress addr=queryConnection.receive(response);
-                if(addr!=null && response.position() != 0)
+                try
                 {
-                    byte[] responseArray = new byte[response.position()];
-                    response.flip();
-                    response.get(responseArray);
-                    String responseText = new String(responseArray, "UTF-8");
-                    Log.e("query","receive response:"+responseText);
-                    foundSwing = setSettingsFromText(this, responseText, true);
+                    queryConnection.socket().receive(responsePacket);
+                    SocketAddress addr = responsePacket.getSocketAddress();
+                    if(addr != null && responsePacket.getLength() != 0)
+                    {
+                        String responseText =
+                                new String(responsePacket.getData(), 0, responsePacket.getLength(),
+                                           "UTF-8");
+                        Log.e("query", "receive response:" + responseText);
+                        foundSwing = setSettingsFromText(this, responseText, true);
+
+                    }
+                }
+                catch(SocketTimeoutException to)
+                {
+
                 }
             }
             queryConnection.close();
         } catch(IOException e)
         {
+            try
+            {
+                queryConnection.close();
+            } catch(IOException e1)
+            {
+                e1.printStackTrace();
+            }
             e.printStackTrace();
         }
         return foundSwing;
@@ -599,6 +667,8 @@ public class GyroClientService extends Service
         SharedPreferences.Editor e = settings.edit();
         e.putInt("WIFI_NUM",wifiNum);
         e.putInt("SWING_NUM",swingNum);
+        e.putString("BTADDR", "00:00:00:00:00:00");
+        e.putString("UDPADDR", "1.1.1.1");
         e.commit();
         sSettingsDirty = true;
     }

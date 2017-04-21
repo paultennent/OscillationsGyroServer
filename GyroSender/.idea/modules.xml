@@ -3,7 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/flashcamerasource/flashcamerasource.iml" filepath="$PROJECT_DIR$/flashcamerasource/flashcamerasource.iml" />
-      <module fileurl="file://$PROJECT_DIR$/simplegyroclient/simplegyroclient.iml" filepath="$PROJECT_DIR$/simplegyroclient/simplegyroclient.iml" />
+      <module fileurl="file://$PROJECT_DIR$/gyroclientserver/gyroclientserver.iml" filepath="$PROJECT_DIR$/gyroclientserver/gyroclientserver.iml" />
       <module fileurl="file://$PROJECT_DIR$/simplegyroserver/simplegyroserver.iml" filepath="$PROJECT_DIR$/simplegyroserver/simplegyroserver.iml" />
     </modules>
   </component>

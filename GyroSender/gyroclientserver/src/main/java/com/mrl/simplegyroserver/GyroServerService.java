@@ -1,5 +1,6 @@
 package com.mrl.simplegyroserver;
 
+import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
@@ -16,10 +17,14 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.media.AudioManager;
 import android.media.ToneGenerator;
+import android.net.wifi.WifiManager;
 import android.os.*;
 import android.util.Log;
+import android.util.Pair;
 
+import com.mrl.flashcamerasource.MulticastConnector;
 import com.mrl.flashcamerasource.ServiceWifiChecker;
+import com.mrl.simplegyroclient.R;
 
 import java.io.*;
 import java.net.*;
@@ -57,6 +62,9 @@ public class GyroServerService extends Service implements SensorEventListener
 
     byte[] mDataBytes=new byte[PACKET_SIZE];
     ByteBuffer dataByteBuffer =ByteBuffer.wrap(mDataBytes);
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
+    MulticastConnector mConnector;
 
     public GyroServerService()
     {
@@ -65,6 +73,24 @@ public class GyroServerService extends Service implements SensorEventListener
     @Override
     public void onCreate()
     {
+        mConnector=new MulticastConnector(this,true);
+        Notification noti = new Notification.Builder(this)
+                .setContentTitle("Gyro Server Service running")
+                .setContentText("this phone should be under the swing")
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .build();
+        startForeground(1,noti);
+
+        PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
+                                            "clientWakelock");
+        wakeLock.acquire();
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+
+        wifiLock= wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "gyroserverwifilock");;
+        wifiLock.acquire();
+
+
         sRunning=true;
         mSensorThread =new HandlerThread("gyrohandler")
         {
@@ -80,6 +106,9 @@ public class GyroServerService extends Service implements SensorEventListener
     @Override
     public void onDestroy()
     {
+        mConnector.close();
+        wifiLock.release();
+        wakeLock.release();
         mShuttingDown=true;
         SensorManager sm=(SensorManager)getSystemService(SENSOR_SERVICE);
         sm.unregisterListener(this);
@@ -388,6 +417,27 @@ public class GyroServerService extends Service implements SensorEventListener
 
     void listenUDP()
     {
+        Pair<String,SocketAddress> query=mConnector.GetData();
+        if(query.first!=null)
+        {
+            if(query.first.startsWith(String.format("Q%02d",sSwingID%100)))
+            {
+                String queryResponse = getSettingsString(this);
+                InetSocketAddress addr=(InetSocketAddress)query.second;
+                addr=new InetSocketAddress(addr.getAddress(),
+                                           Integer.parseInt(query.first.split(":")[1]));
+
+                byte[] bytes = new byte[0];
+                try
+                {
+                    bytes = queryResponse.getBytes("UTF-8");
+                    mUDPConnection.send(ByteBuffer.wrap(bytes), addr);
+                } catch(IOException e)
+                {
+                    e.printStackTrace();
+                }
+            }
+        }
         if(sSwingID==-1)
         {
             getSwingID(this);
@@ -409,12 +459,15 @@ public class GyroServerService extends Service implements SensorEventListener
                 if(dataRead.get(0) == 81 && dataRead.get(1) == 48 + (sSwingID / 10) &&
                         dataRead.get(2) == 48 + (sSwingID % 10))
                 {
+                    // clear existing target so we don't flood the world with messages
+                    mUDPTarget=null;
                     // send a response to give our IP address and bluetooth ID
                     // send getSettingsString(this) to them
                     String queryResponse = getSettingsString(this);
                     byte[] bytes = queryResponse.getBytes("UTF-8");
                     mUDPConnection.send(ByteBuffer.wrap(bytes), addr);
                     Log.e("query","send response:"+queryResponse);
+
                 }
             }
         } catch(IOException e)

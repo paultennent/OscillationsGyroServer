@@ -24,6 +24,7 @@ public class ServiceWifiChecker
 {
     static long lastCheckTime=System.currentTimeMillis();
     static int lastNum=-1;
+    static boolean lastResponse=false;
     static List<String> wifiPoints = new ArrayList<String>();
     static List<String> wifiPasswords = new ArrayList<String>();
     static String lastAddress="";
@@ -71,11 +72,11 @@ public class ServiceWifiChecker
             wifiNum=wifiPoints.size()-1;
         }
 
-        // let it take 5 seconds to connect otherwise we go crazy with refreshing which
+        // let it take 15 seconds to connect otherwise we go crazy with refreshing which
         // makes the wifimanager go bad
-        if(System.currentTimeMillis()-lastCheckTime<5000 && wifiNum==lastNum)
+        if(System.currentTimeMillis()-lastCheckTime<15000 && wifiNum==lastNum)
         {
-            return false;
+            return lastResponse;
         }
         lastCheckTime=System.currentTimeMillis();
         lastNum=wifiNum;
@@ -95,8 +96,10 @@ public class ServiceWifiChecker
                 SupplicantState.ASSOCIATED || stat==SupplicantState.COMPLETED))
         {
             // already on the right wifi and connected, do nothing
-            return true;
+            lastResponse=true;
+            return lastResponse;
         }
+        lastResponse=false;
 
 
         if(connectedSSID.length()>0 && connectedSSID.compareTo(quotedSSID)!=0)
@@ -156,6 +159,7 @@ public class ServiceWifiChecker
             wifiManager.enableNetwork(netID, true);
         }
         wifiManager.reconnect();
+        wifiManager.startScan();
         // always return false here because we are still connecting to the new wifi
         // we'll check again in the receiver loop
         return false;
