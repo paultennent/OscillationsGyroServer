@@ -126,9 +126,11 @@ public class GyroClientService extends Service
         {
             int wifiNum= intent.getIntExtra("WIFI_NUM",-1);
             int swingID=intent.getIntExtra("SWING_ID",-1);
-            swingID=swingID%100;
-            // launch a thread to go to this wifi and set the swing id once the wifi is loaded
-            setWifiConnection(this,wifiNum,swingID);
+            if(wifiNum>=0 && wifiNum<10 && swingID>=0 && swingID<20)
+            {
+                // launch a thread to go to this wifi and set the swing id once the wifi is loaded
+                setWifiConnection(this, wifiNum, swingID);
+            }
         }
         // We want this service to continue running until it is explicitly
         // stopped, so return sticky.
@@ -356,17 +358,15 @@ public class GyroClientService extends Service
 
             // we would try bt connection any time it is dropped, but it causes jitters if we do
             // so only do on startup or settings change
-            if(tryBTConnection && (btConnection == null || btConnection.isConnected() == false))
+            if(tryBTConnection && (btConnection == null || btConnection.isConnected() == false)
+                    && mBTAddr.compareToIgnoreCase("00:00:00:00:00:00")!=0)
             {
                 // connector object tries to do BT connection (this takes time so is in thread)
                 if(btConnector == null )
                 {
-                    if(mBTAddr.compareToIgnoreCase("00:00:00:00:00:00")!=0)
-                    {
-                        btConnector = new BTClientConnector(adp, mBTAddr.toUpperCase());
-                        btConnector.start();
-                        Log.d("bt", "try bt connection");
-                    }
+                    btConnector = new BTClientConnector(adp, mBTAddr.toUpperCase());
+                    btConnector.start();
+                    Log.d("bt", "try bt connection");
                 } else
                 {
                     // when the connection thread dies, we may or may not have a good connection
