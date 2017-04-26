@@ -2,7 +2,7 @@
 <manifest package="com.mrl.simplegyroclient"
           xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <uses-permission android:name="android.permission.BLUETOOTH"/>
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"/>
@@ -11,6 +11,7 @@
     <uses-permission android:name="android.permission.NFC"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
 
     <application
@@ -19,7 +20,10 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
-        <activity android:name=".GyroClientStarter" android:launchMode="singleTask"  android:screenOrientation="portrait">
+        <activity
+            android:name=".GyroClientStarter"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <action android:name=".GyroClientStarter"/>
@@ -34,18 +38,22 @@
             android:exported="true">
         </service>
 
-        <activity android:name=".NFCDiscoveredActivity" >
+        <activity android:name=".NFCDiscoveredActivity">
             <intent-filter>
-                <action android:name="android.nfc.action.TECH_DISCOVERED" />
+                <action android:name="android.nfc.action.TECH_DISCOVERED"/>
             </intent-filter>
+
             <category android:name="android.intent.category.INFO"/>
 
-            <meta-data android:name="android.nfc.action.TECH_DISCOVERED"
-                       android:resource="@xml/filter_nfc"
-                />
+            <meta-data
+                android:name="android.nfc.action.TECH_DISCOVERED"
+                android:resource="@xml/filter_nfc"/>
         </activity>
-
-        <activity android:name="com.mrl.simplegyroserver.GyroServerStarter" android:label="SimpleGyroServer" android:launchMode="singleTask" android:screenOrientation="portrait">
+        <activity
+            android:name="com.mrl.simplegyroserver.GyroServerStarter"
+            android:label="SimpleGyroServer"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name=".GyroServerStarter"/>
                 <action android:name="android.intent.action.MAIN"/>
@@ -59,7 +67,22 @@
             android:enabled="true">
         </service>
 
+        <activity
+            android:name="com.mrl.boxupload.BoxUploader"
+            android:label="@string/title_activity_box_uploader">
+            <intent-filter>
+                <action android:name=".BoxUploader"/>
+                <action android:name="android.intent.action.MAIN"/>
 
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name="com.mrl.boxupload.BoxUploadService"
+            android:exported="true"
+            android:enabled="true">
+        </service>
     </application>
 
 </manifest>

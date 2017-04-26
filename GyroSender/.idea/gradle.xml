@@ -9,9 +9,9 @@
         <option name="modules">
           <set>
             <option value="$PROJECT_DIR$" />
+            <option value="$PROJECT_DIR$/box-content-sdk" />
             <option value="$PROJECT_DIR$/flashcamerasource" />
             <option value="$PROJECT_DIR$/gyroclientserver" />
-            <option value="$PROJECT_DIR$/simplegyroserver" />
           </set>
         </option>
         <option name="resolveModulePerSourceSet" value="false" />

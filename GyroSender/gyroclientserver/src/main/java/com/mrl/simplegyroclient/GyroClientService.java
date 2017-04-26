@@ -282,30 +282,6 @@ public class GyroClientService extends Service
             if(btConnector != null) connectionState |= 8;
             sConnectionState = connectionState;
 
-            // if we are connected
-            if(needsWifiCheck)
-            {
-                if( sWifiNum!=-1)
-                {
-                    if(ServiceWifiChecker.checkWifi(this, sWifiNum))
-                    {
-                        if(sSwingNum != -1)
-                        {
-                            // need to check wifi again if we don't get a response, otherwise we've found the right swing
-                            needsWifiCheck=!connectToSwing(sSwingNum);
-                            // poll only in 2 seconds
-                            udpPollTime=curTime+1000;
-                            settingsFromWifi=true;
-                        }else
-                        {
-                            needsWifiCheck=false;
-                        }
-                    }
-                }else
-                {
-                    needsWifiCheck=false;
-                }
-            }
             if(sSettingsDirty)
             {
                 sSettingsDirty = false;
@@ -336,6 +312,30 @@ public class GyroClientService extends Service
                     }
                 }
             }
+            // if we are connected
+            if(needsWifiCheck || mIPAddr==null || mIPAddr.compareToIgnoreCase("1.1.1.1")==0)
+            {
+                if( sWifiNum!=-1)
+                {
+                    if(ServiceWifiChecker.checkWifi(this, sWifiNum))
+                    {
+                        if(sSwingNum != -1)
+                        {
+                            // need to check wifi again if we don't get a response, otherwise we've found the right swing
+                            needsWifiCheck=!connectToSwing(sSwingNum);
+                            // poll only in 2 seconds
+                            udpPollTime=curTime+1000;
+                            settingsFromWifi=true;
+                        }else
+                        {
+                            needsWifiCheck=false;
+                        }
+                    }
+                }else
+                {
+                    needsWifiCheck=false;
+                }
+            }
 
             if((connectionState & 3) == 0)
             {
@@ -359,11 +359,14 @@ public class GyroClientService extends Service
             if(tryBTConnection && (btConnection == null || btConnection.isConnected() == false))
             {
                 // connector object tries to do BT connection (this takes time so is in thread)
-                if(btConnector == null)
+                if(btConnector == null )
                 {
-                    btConnector = new BTClientConnector(adp, mBTAddr.toUpperCase());
-                    btConnector.start();
-                    Log.d("bt", "try bt connection");
+                    if(mBTAddr.compareToIgnoreCase("00:00:00:00:00:00")!=0)
+                    {
+                        btConnector = new BTClientConnector(adp, mBTAddr.toUpperCase());
+                        btConnector.start();
+                        Log.d("bt", "try bt connection");
+                    }
                 } else
                 {
                     // when the connection thread dies, we may or may not have a good connection

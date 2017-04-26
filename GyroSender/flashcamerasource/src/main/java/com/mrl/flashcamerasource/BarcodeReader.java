@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.hardware.Camera;
 import android.support.v4.app.ActivityCompat;
+import android.util.Log;
 import android.util.SparseArray;
 
 import com.google.android.gms.vision.Detector;
@@ -75,6 +76,7 @@ public class BarcodeReader implements Detector.Processor<Barcode>
     {
         if(mCapturedCode != null && mCapturedCode != "")
         {
+            Log.d("code", mCapturedCode);
             return mCapturedCode;
         } else
         {

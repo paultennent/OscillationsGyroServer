@@ -4,4 +4,5 @@
     <string name="server_app_name">SimpleGyroServer</string>
     <string name="service_name">Gyro NFC service</string>
     <string name="aid_group_description">Gyro NFC service AID</string>
+    <string name="title_activity_box_uploader">BoxUploader</string>
 </resources>

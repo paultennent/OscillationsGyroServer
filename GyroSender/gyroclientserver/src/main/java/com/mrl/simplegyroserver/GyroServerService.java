@@ -737,6 +737,7 @@ public class GyroServerService extends Service implements SensorEventListener
         {
             mLastBatteryTimestamp=mTimestamp;
             checkBattery();
+            mConnector.forceReloadSocket();
         }
         mLastTimestamp=mTimestamp;
     }

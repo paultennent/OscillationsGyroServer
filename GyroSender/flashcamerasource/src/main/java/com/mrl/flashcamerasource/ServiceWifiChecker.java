@@ -24,6 +24,7 @@ public class ServiceWifiChecker
 {
     static long lastCheckTime=System.currentTimeMillis();
     static int lastNum=-1;
+    static int lastDisconnected=-1;
     static boolean lastResponse=false;
     static List<String> wifiPoints = new ArrayList<String>();
     static List<String> wifiPasswords = new ArrayList<String>();
@@ -74,7 +75,7 @@ public class ServiceWifiChecker
 
         // let it take 15 seconds to connect otherwise we go crazy with refreshing which
         // makes the wifimanager go bad
-        if(System.currentTimeMillis()-lastCheckTime<15000 && wifiNum==lastNum)
+        if(System.currentTimeMillis()-lastCheckTime<5000 && wifiNum==lastNum)
         {
             return lastResponse;
         }
@@ -100,9 +101,14 @@ public class ServiceWifiChecker
             return lastResponse;
         }
         lastResponse=false;
+        if(connectedSSID.compareTo(quotedSSID)==0)
+        {
+            // connecting to the right ssid, just wait until connected right
+            return lastResponse;
+        }
 
 
-        if(connectedSSID.length()>0 && connectedSSID.compareTo(quotedSSID)!=0)
+        if(connectedSSID.length()>0 && connectedSSID.compareTo(quotedSSID)!=0 && connectedSSID.compareTo("<unknown ssid>")!=0)
         {
             // make sure we are disconnected okay from any different SSID
             wifiManager.disconnect();
@@ -126,6 +132,7 @@ public class ServiceWifiChecker
                             // this is the network we want and it is configured already
                             existingNetworkConfig = config;
                             wifiManager.enableNetwork(config.networkId, true);
+                            changedConfig=true;
                         } else
                         {
                             // this is our other network - get rid of it
@@ -167,7 +174,7 @@ public class ServiceWifiChecker
 
 
     public static String wifiIPAddress(Context ctx) {
-        if(System.currentTimeMillis()-lastAddressTime<5000 )
+        if(System.currentTimeMillis()-lastAddressTime<1000 )
         {
             return lastAddress;
         }

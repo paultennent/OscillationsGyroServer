@@ -1,1 +1,1 @@
-include  ':simplegyroserver', ':gyroclientserver', ':flashcamerasource'
+include ':gyroclientserver', ':flashcamerasource', ':box-content-sdk'
