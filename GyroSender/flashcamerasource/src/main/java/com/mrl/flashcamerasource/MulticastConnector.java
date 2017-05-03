@@ -80,12 +80,26 @@ public class MulticastConnector extends Thread
         {
         }
 
+        long lastSocketTime=System.currentTimeMillis();
+
+
         while(!mQuitting)
         {
+            if(System.currentTimeMillis()-lastSocketTime>10000)
+            {
+                // reconnect once every 10 seconds or else sleep
+                // does naughty things to us
+                if(socket!=null)
+                {
+                    socket.close();
+                    socket = null;
+                }
+            }
             if(socket==null)
             {
                 try
                 {
+                    lastSocketTime=System.currentTimeMillis();
                     socket = new MulticastSocket(PORT);
                     socket.setSoTimeout(1000);
                     socket.joinGroup(group);

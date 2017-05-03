@@ -3,6 +3,7 @@ package com.mrl.simplegyroserver;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -12,6 +13,7 @@ import android.nfc.NfcAdapter;
 import android.nfc.NfcEvent;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.PowerManager;
 import android.support.v4.app.ActivityCompat;
 import android.util.Log;
 import android.view.Menu;
@@ -36,6 +38,8 @@ public class GyroServerStarter extends Activity
     BarcodeReader m_CodeReader=new BarcodeReader();
 
     Handler m_Handler;
+    private boolean mIsInForegroundMode=true;
+
 
     NfcAdapter.CreateNdefMessageCallback mNDEFCallback=new NfcAdapter.CreateNdefMessageCallback()
     {
@@ -90,18 +94,6 @@ public class GyroServerStarter extends Activity
             nfcAdapter.setNdefPushMessageCallback(mNDEFCallback,this);
         }
 
-        if(!GyroServerService.sRunning)
-        {
-            if(com.mrl.simplegyroclient.GyroClientService.sRunning)
-            {
-                Intent intent= new Intent(getBaseContext(), com.mrl.simplegyroclient.GyroClientService.class);
-                stopService(intent);
-            }
-
-            Intent intent = new Intent(getBaseContext(), GyroServerService.class);
-            startService(intent);
-        }
-
         m_CodeReader.startReading(this);
 
         checkServiceStatus();
@@ -129,6 +121,18 @@ public class GyroServerStarter extends Activity
             afterCheckedPermissions();
         }
 
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        mIsInForegroundMode = false;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        mIsInForegroundMode = true;
     }
 
     @Override
@@ -174,28 +178,49 @@ public class GyroServerStarter extends Activity
     {
         if(m_CodeReader.isReading())
         {
-            String code=m_CodeReader.getDetectedCode();
-            if(code!=null)
+            String code = m_CodeReader.getDetectedCode();
+            if(code != null)
             {
                 // check if it is a valid code
                 try
                 {
-                    String withoutCheck=code.substring(0,code.length()-1);
-                    int value = (int)(Long.parseLong(withoutCheck) % (10000000));
-                    if(value>1000000)
+                    String withoutCheck = code.substring(0, code.length() - 1);
+                    int value = (int) (Long.parseLong(withoutCheck) % (10000000));
+                    if(value > 1000000)
                     {
                         // connect to the right wifi network - this codescheme allows for 100 wifis and any number of swings
-                        int wifiNum=(value-1000000)%(1000);
-                        int swingID=(value-1000000)/1000;
-                        GyroServerService.setSwingId(this,swingID);
-                        GyroServerService.setWifiNum(this,wifiNum);
+                        int wifiNum = (value - 1000000) % (1000);
+                        int swingID = (value - 1000000) / 1000;
+                        GyroServerService.setSwingId(this, swingID);
+                        GyroServerService.setWifiNum(this, wifiNum);
                         m_CodeReader.stopReading();
+                        if(!GyroServerService.sRunning)
+                        {
+                            onClickLaunchButton(null);
+                        }
+
                     }
-                }catch(NumberFormatException e)
+                } catch(NumberFormatException e)
                 {
                     e.printStackTrace();
                 }
             }
+        }
+        if(mIsInForegroundMode==false)
+        {
+            m_Handler.postDelayed(new Runnable()
+            {
+                @Override
+                public void run()
+                {
+                    checkServiceStatus();
+                }
+            }, 1000);
+            return;
+        }
+        if(m_CodeReader.isReading())
+        {
+
             findViewById(R.id.barcode).setVisibility(View.VISIBLE);
             findViewById(R.id.launch_button).setVisibility(View.INVISIBLE);
             findViewById(R.id.status_text).setVisibility(View.INVISIBLE);
@@ -214,7 +239,6 @@ public class GyroServerStarter extends Activity
         {
             wifiName=Character.toString((char)('A'+GyroServerService.sWifiNum));
         }
-
 
         tv_inf.setText("Address: "+ipAddr+":"+ GyroServerService.UDP_PORT+"\n"+"BT:"+GyroServerService.getBluetoothMac(this)+"\n"+GyroServerService.getSettingsString(this )
         +"\nWifi name:"+wifiName+"\n"+"swing num:"+GyroServerService.getSwingID(this));

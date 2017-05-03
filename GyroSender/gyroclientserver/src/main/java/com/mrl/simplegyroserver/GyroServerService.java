@@ -34,6 +34,7 @@ import java.nio.channels.DatagramChannel;
 import java.util.Calendar;
 import java.util.TimeZone;
 import java.util.UUID;
+import java.util.concurrent.locks.Lock;
 
 public class GyroServerService extends Service implements SensorEventListener
 {
@@ -189,6 +190,7 @@ public class GyroServerService extends Service implements SensorEventListener
 
     class AsyncOutputStream extends Thread
     {
+        Object sendEvent=new Object();
         byte[] buffer;
         int outSize;
         volatile boolean dataReady;
@@ -218,6 +220,18 @@ public class GyroServerService extends Service implements SensorEventListener
                             tempSize=outSize;
                         }
                         mStr.write(tempBuf,0,outSize);
+                    }else
+                    {
+                        try
+                        {
+                            synchronized(sendEvent)
+                            {
+                                sendEvent.wait(1000);
+                            }
+                        } catch(InterruptedException e)
+                        {
+                            e.printStackTrace();
+                        }
                     }
                 }
             } catch(IOException e)
@@ -251,6 +265,10 @@ public class GyroServerService extends Service implements SensorEventListener
                 outSize=thisBuf.length;
                 System.arraycopy(thisBuf, 0, buffer, 0, outSize);
                 dataReady = true;
+                synchronized(sendEvent)
+                {
+                    sendEvent.notifyAll();
+                };
             }
             return true;
         }
@@ -660,6 +678,11 @@ public class GyroServerService extends Service implements SensorEventListener
         if(mAngle < -Math.PI)
         {
             mAngle += 2.0f * Math.PI;
+        }
+        if(Math.abs(mAccelCorrectionAmount)>60)
+        {
+            mAngle+=mAccelCorrectionAmount;
+            mAccelCorrectionAmount=0;
         }
         if(mAccelCorrectionAmount > 0)
         {
