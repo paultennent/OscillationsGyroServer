@@ -21,6 +21,7 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import android.support.v4.app.ActivityCompat;
 import android.util.Log;
+import android.util.Pair;
 
 import com.mrl.flashcamerasource.MulticastConnector;
 import com.mrl.flashcamerasource.ServiceWifiChecker;
@@ -65,7 +66,7 @@ public class GyroClientService extends Service
     @Override
     public void onCreate()
     {
-        mConnector=new MulticastConnector(this,false);
+        mConnector=new MulticastConnector(this,true,99,99);
         Notification noti = new Notification.Builder(this)
                 .setContentTitle("Gyro Client Service running")
                 .setContentText("this phone should be in a headset")
@@ -314,8 +315,8 @@ public class GyroClientService extends Service
                     }
                 }
             }
-            // if we are connected
-            if(needsWifiCheck || mIPAddr==null || mIPAddr.compareToIgnoreCase("1.1.1.1")==0)
+            // if we are not connected - check wifi, check address etc.
+            if(needsWifiCheck || mIPAddr==null || mIPAddr.compareToIgnoreCase("1.1.1.1")==0 || (connectionState & 3) == 0)
             {
                 if( sWifiNum!=-1)
                 {
@@ -324,10 +325,13 @@ public class GyroClientService extends Service
                         if(sSwingNum != -1)
                         {
                             // need to check wifi again if we don't get a response, otherwise we've found the right swing
-                            needsWifiCheck=!connectToSwing(sSwingNum);
+                            if(connectToSwing(sSwingNum))
+                            {
+                                settingsFromWifi=true;
+                                needsWifiCheck=false;
+                            }
                             // poll only in 2 seconds
-                            udpPollTime=curTime+1000;
-                            settingsFromWifi=true;
+//                            udpPollTime=curTime+1000;
                         }else
                         {
                             needsWifiCheck=false;
@@ -577,89 +581,14 @@ public class GyroClientService extends Service
     // returns true if it found this swing ID
     boolean connectToSwing(int swingNum)
     {
-        boolean foundSwing=false;
-        byte[] responseBuf=new byte[1024];
-        DatagramPacket responsePacket=new DatagramPacket(responseBuf,responseBuf.length);
-        DatagramChannel queryConnection=null;
-        try
+        mConnector.setSwingID(swingNum,sWifiNum);
+        Pair<String,SocketAddress> connectorData=mConnector.GetData();
+        if(connectorData.first!=null && connectorData.first.length()>0)
         {
-            queryConnection = DatagramChannel.open();
-            queryConnection.socket().setSoTimeout(10000);
-            queryConnection.socket().bind(new InetSocketAddress(ServiceWifiChecker.wifiIPAddress(this), 0));
-            mConnector.SendData(String.format("Q%02d:%d",swingNum%100,queryConnection.socket().getLocalPort()));
-        } catch(SocketException e1)
-        {
-            e1.printStackTrace();
-        } catch(IOException e1)
-        {
-            e1.printStackTrace();
+            setSettingsFromText(this,connectorData.first,true);
+            return true;
         }
-
-
-/*        ByteBuffer queryPacket = ByteBuffer.allocate(4);
-        queryPacket.put((byte) 81);
-        queryPacket.put((byte) (48 + (swingNum / 10)));
-        queryPacket.put((byte) (48 + (swingNum % 10)));
-        queryPacket.flip();
-        InetSocketAddress broadcastAddr = new InetSocketAddress(
-                ServiceWifiChecker.wifiBroadcastAddress(this), 2323);
-        DatagramChannel queryConnection = null;
-        // send query packet on local broadcast address
-        // when we get responses, set our addresses based on that
-        // only take the one with the highest timestamp
-        // wait for 1 seconds total in case one is a slowcoach
-        try
-        {
-            queryConnection = DatagramChannel.open();
-            queryConnection.socket().setSoTimeout(10000);
-            queryConnection.socket().setBroadcast(true);
-//            queryConnection.socket().bind(new InetSocketAddress(ServiceWifiChecker.wifiIPAddress(this), 0));
-//            queryConnection.socket().bind(new InetSocketAddress(ServiceWifiChecker.wifiIPAddress(this), 2929));
-            queryConnection.send(queryPacket, broadcastAddr);
-        } catch(SocketException e1)
-        {
-            e1.printStackTrace();
-        } catch(IOException e1)
-        {
-            e1.printStackTrace();
-        }*/
-        try
-        {
-            long endTime = System.currentTimeMillis() + 1000l;
-            while(System.currentTimeMillis() < endTime && !foundSwing)
-            {
-                try
-                {
-                    queryConnection.socket().receive(responsePacket);
-                    SocketAddress addr = responsePacket.getSocketAddress();
-                    if(addr != null && responsePacket.getLength() != 0)
-                    {
-                        String responseText =
-                                new String(responsePacket.getData(), 0, responsePacket.getLength(),
-                                           "UTF-8");
-                        Log.e("query", "receive response:" + responseText);
-                        foundSwing = setSettingsFromText(this, responseText, true);
-
-                    }
-                }
-                catch(SocketTimeoutException to)
-                {
-
-                }
-            }
-            queryConnection.close();
-        } catch(IOException e)
-        {
-            try
-            {
-                queryConnection.close();
-            } catch(IOException e1)
-            {
-                e1.printStackTrace();
-            }
-            e.printStackTrace();
-        }
-        return foundSwing;
+        return false;
     }
 
     static void setWifiConnection(Context ctx, int wifiNum,int swingNum)

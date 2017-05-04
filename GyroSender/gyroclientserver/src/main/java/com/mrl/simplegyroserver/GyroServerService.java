@@ -52,8 +52,8 @@ public class GyroServerService extends Service implements SensorEventListener
     public static int sWifiNum = -1;
 
 
-    public static boolean sRunning = false;
-    public static int sConnectionState = 0;
+    public static volatile boolean sRunning = false;
+    public static volatile int sConnectionState = 0;
     public static float sAngleDebug = 0;
     public static float sCorrectionAmountDebug = 0;
 
@@ -62,11 +62,16 @@ public class GyroServerService extends Service implements SensorEventListener
     HandlerThread mSensorThread;
     Handler mSensorEventHandler;
 
+    volatile boolean mReadingSensors=false;
+
     byte[] mDataBytes = new byte[PACKET_SIZE];
     ByteBuffer dataByteBuffer = ByteBuffer.wrap(mDataBytes);
     private PowerManager.WakeLock wakeLock;
     private WifiManager.WifiLock wifiLock;
     MulticastConnector mConnector;
+
+    private WifiManager.MulticastLock multicastLock=null;
+
 
     public GyroServerService()
     {
@@ -75,7 +80,8 @@ public class GyroServerService extends Service implements SensorEventListener
     @Override
     public void onCreate()
     {
-        mConnector = new MulticastConnector(this, true);
+        sConnectionState=0;
+        mConnector = new MulticastConnector(this, false,99,99);
         Notification noti = new Notification.Builder(this)
                 .setContentTitle("Gyro Server Service running")
                 .setContentText("this phone should be under the swing")
@@ -85,15 +91,16 @@ public class GyroServerService extends Service implements SensorEventListener
 
         PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
-                                            "clientWakelock");
+                                            "serverWakelock");
         wakeLock.acquire();
         WifiManager wm =
                 (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
 
         wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "gyroserverwifilock");
-        ;
         wifiLock.acquire();
 
+        multicastLock = wm.createMulticastLock("gyroservermulticastlock");
+        multicastLock.acquire();
 
         sRunning = true;
         mSensorThread = new HandlerThread("gyrohandler")
@@ -110,6 +117,8 @@ public class GyroServerService extends Service implements SensorEventListener
     @Override
     public void onDestroy()
     {
+        multicastLock.release();
+
         mConnector.close();
         wifiLock.release();
         wakeLock.release();
@@ -152,7 +161,20 @@ public class GyroServerService extends Service implements SensorEventListener
     public void initSensorThread()
     {
 
-        // connect to sensors
+
+        mFirstTime = true;
+        sConnectionState=0;
+
+        openBluetooth();
+        Log.d("woo", "open BT");
+        openUDP();
+        Log.d("woo", "open UDP");
+        disconnectedHandler();
+
+    }
+
+    public void connectSensors()
+    {
         SensorManager sm = (SensorManager) getSystemService(SENSOR_SERVICE);
         Sensor sensor = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
         Sensor sensor2;
@@ -165,18 +187,28 @@ public class GyroServerService extends Service implements SensorEventListener
         }
         Sensor sensor3 = sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
 
-        sm.registerListener(this, sensor, SensorManager.SENSOR_DELAY_FASTEST, mSensorEventHandler);
-        sm.registerListener(this, sensor2, SensorManager.SENSOR_DELAY_FASTEST, mSensorEventHandler);
-        sm.registerListener(this, sensor3, SensorManager.SENSOR_DELAY_UI, mSensorEventHandler);
-        Log.d("woo", "connected sensors");
+        boolean success= sm.registerListener(this, sensor, SensorManager.SENSOR_DELAY_FASTEST, mSensorEventHandler);
+        success&= sm.registerListener(this, sensor2, SensorManager.SENSOR_DELAY_FASTEST, mSensorEventHandler);
+        success&= sm.registerListener(this, sensor3, SensorManager.SENSOR_DELAY_UI, mSensorEventHandler);
+        Log.d("woo", "connected sensors: "+success);
+        if(success)
+        {
+            mReadingSensors=true;
+            bJustConnected=true;
+            mFirstTime=true;
+        }else
+        {
+            mReadingSensors=false;
+            sm.unregisterListener(this);
+        }
+    }
 
-        mFirstTime = true;
-
-        openBluetooth();
-        Log.d("woo", "open BT");
-        openUDP();
-        Log.d("woo", "open UDP");
-
+    public void disconnectSensors()
+    {
+        SensorManager sm = (SensorManager) getSystemService(SENSOR_SERVICE);
+        sm.unregisterListener(this);
+        mReadingSensors=false;
+        sConnectionState=0;
 
     }
 
@@ -314,31 +346,30 @@ public class GyroServerService extends Service implements SensorEventListener
                 mBTServerSocket = mBTAdapter
                         .listenUsingInsecureRfcommWithServiceRecord("Gyro service", BLUETOOTH_UUID);
                 mConnectedSocket = mBTServerSocket.accept();
-                if(mBTServerSocket != null)
+                closeServerSocket();
+                // pause to make sure we're connected
+                try
                 {
-                    mBTServerSocket.close();
+                    Thread.sleep(10);
+                } catch(InterruptedException e)
+                {
+                    e.printStackTrace();
                 }
             } catch(IOException e)
             {
                 e.printStackTrace();
-                try
-                {
-                    if(mBTServerSocket != null)
-                    {
-                        mBTServerSocket.close();
-                    }
-                } catch(IOException e1)
-                {
-                    e1.printStackTrace();
-                }
-                mBTServerSocket = null;
+                closeServerSocket();
             }
         }
 
-        public void shutdownAcceptThread()
+        void closeServerSocket()
         {
-            BluetoothServerSocket sock = mBTServerSocket;
-            mBTServerSocket = null;
+            BluetoothServerSocket sock=null;
+            synchronized(this)
+            {
+                sock = mBTServerSocket;
+                mBTServerSocket = null;
+            }
             if(sock != null)
             {
                 try
@@ -349,6 +380,11 @@ public class GyroServerService extends Service implements SensorEventListener
                     e.printStackTrace();
                 }
             }
+        }
+
+        public void shutdownAcceptThread()
+        {
+            closeServerSocket();
             if(Thread.currentThread() != BTServerConnector.this && isAlive())
             {
                 try
@@ -516,6 +552,7 @@ public class GyroServerService extends Service implements SensorEventListener
     SocketAddress mUDPTarget;
     ByteBuffer dataRead = ByteBuffer.allocateDirect(4);
     long mUDPLastPingTime = 0;
+    boolean bJustConnected=true;
 
     void openUDP()
     {
@@ -548,27 +585,6 @@ public class GyroServerService extends Service implements SensorEventListener
 
     void listenUDP()
     {
-        Pair<String, SocketAddress> query = mConnector.GetData();
-        if(query.first != null)
-        {
-            if(query.first.startsWith(String.format("Q%02d", sSwingID % 100)))
-            {
-                String queryResponse = getSettingsString(this);
-                InetSocketAddress addr = (InetSocketAddress) query.second;
-                addr = new InetSocketAddress(addr.getAddress(),
-                                             Integer.parseInt(query.first.split(":")[1]));
-
-                byte[] bytes = new byte[0];
-                try
-                {
-                    bytes = queryResponse.getBytes("UTF-8");
-                    mUDPConnection.send(ByteBuffer.wrap(bytes), addr);
-                } catch(IOException e)
-                {
-                    e.printStackTrace();
-                }
-            }
-        }
         if(sSwingID == -1)
         {
             getSwingID(this);
@@ -583,6 +599,10 @@ public class GyroServerService extends Service implements SensorEventListener
                 // 'Hi' = send to this address
                 if(dataRead.get(0) == 72 && dataRead.get(1) == 105)
                 {
+                    if(mUDPTarget==null)
+                    {
+                        bJustConnected=true;
+                    }
                     mUDPTarget = addr;
                     mUDPLastPingTime = System.currentTimeMillis();
                 }
@@ -641,6 +661,7 @@ public class GyroServerService extends Service implements SensorEventListener
     long mLastTimestamp;
     long mLastSendTimestamp;
     long mLastListenTimestamp;
+    long mLastPollTimestamp;
     long mLastGyroTimestamp;
     long mLastBatteryTimestamp;
 
@@ -719,8 +740,8 @@ public class GyroServerService extends Service implements SensorEventListener
     float mAccelMin = 0;
     float mAngleAtMax = 0;
 
-    ToneGenerator tg =
-            new ToneGenerator(AudioManager.STREAM_NOTIFICATION, ToneGenerator.MAX_VOLUME);
+//    ToneGenerator tg =
+//            new ToneGenerator(AudioManager.STREAM_NOTIFICATION, ToneGenerator.MAX_VOLUME);
 
     public void onRotationVectorData(SensorEvent event)
     {
@@ -728,8 +749,15 @@ public class GyroServerService extends Service implements SensorEventListener
         SensorManager.getOrientation(mRotationMatrix, mOrientation);
         // TODO maybe get mag from here?
         float roll = -mOrientation[1];
-        mAccelCorrectionAmount = roll - mAngle;
-        sCorrectionAmountDebug = mAccelCorrectionAmount;
+        if(bJustConnected)
+        {
+            mAngle=roll;
+            bJustConnected=false;
+        }else
+        {
+            mAccelCorrectionAmount = roll - mAngle;
+            sCorrectionAmountDebug = mAccelCorrectionAmount;
+        }
         //mAngle=0.998f*mAngle+0.002f*roll;
     }
 
@@ -800,6 +828,12 @@ public class GyroServerService extends Service implements SensorEventListener
 
     }
 
+    public void sendSwingInfo()
+    {
+        mConnector.setSwingID(sSwingID,sWifiNum);
+        mConnector.SendData(getSettingsString(this));
+    }
+
     public void constructBuffer()
     {
         dataByteBuffer.rewind();
@@ -822,6 +856,7 @@ public class GyroServerService extends Service implements SensorEventListener
             mLastTimestamp = mTimestamp;
             mLastSendTimestamp = mTimestamp;
             mLastListenTimestamp = mTimestamp;
+            mLastPollTimestamp=mTimestamp;
             mLastBatteryTimestamp = mTimestamp - 10000000000L;
             mFirstTime = false;
             return;
@@ -865,20 +900,60 @@ public class GyroServerService extends Service implements SensorEventListener
             mLastListenTimestamp = mTimestamp;
             listenBluetooth();
             listenUDP();
-            //Log.d("gyro","sensor:"+mAngle+":"+mAngularVelocity+":"+mAccelCorrectionAmount);
             if(sWifiNum != -1)
             {
                 ServiceWifiChecker.checkWifi(this, sWifiNum);
             }
+        }
+        // send swing info every 1 second
+        if(mTimestamp - mLastPollTimestamp> 10000000000L)
+        {
+            sendSwingInfo();
+            mLastPollTimestamp=mTimestamp;
         }
         // get battery every 10 seconds
         if(mTimestamp - mLastBatteryTimestamp > 10000000000L)
         {
             mLastBatteryTimestamp = mTimestamp;
             checkBattery();
-            mConnector.forceReloadSocket();
         }
+        // disconnect sensors if no one is listening
+        if((sConnectionState&0x3)==0)disconnectSensors();
         mLastTimestamp = mTimestamp;
+    }
+
+    int mDisconnectedCounter=0;
+    // if we're disconnected we don't read sensors, just wait for connections and send our info out
+    // this code runs always just in case the state variable is broken for some reason
+    public void disconnectedHandler()
+    {
+        if((mDisconnectedCounter & 15) == 0)
+        {
+            sendSwingInfo();
+        }
+        if((mDisconnectedCounter & 127) == 0)
+        {
+            checkBattery();
+        }
+        listenBluetooth();
+        listenUDP();
+        if(sWifiNum != -1)
+        {
+            ServiceWifiChecker.checkWifi(this, sWifiNum);
+        }
+
+        if((sConnectionState&3)!=0 && !mReadingSensors)
+        {
+            connectSensors();
+        }
+        mDisconnectedCounter++;
+        mSensorEventHandler.postDelayed(new Runnable(){
+            @Override
+            public void run()
+            {
+                disconnectedHandler();
+            }
+        }, 100);
     }
 
     @Override

@@ -17,7 +17,6 @@ import java.util.concurrent.locks.Lock;
 
 public class MulticastConnector extends Thread
 {
-    private WifiManager.MulticastLock multicastLock=null;
     Thread t;
     boolean mQuitting=false;
 
@@ -28,15 +27,18 @@ public class MulticastConnector extends Thread
 
     final int PORT=6789;
 
-    public MulticastConnector(Context ctx,boolean receive)
+    volatile int swingID=0;
+    volatile int netID=0;
+
+    public MulticastConnector(Context ctx,boolean receive,int swingID,int netID)
     {
+        this.swingID=swingID;
+        this.netID=netID;
         WifiManager wm =
                 (WifiManager) ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
 
         if(receive)
         {
-            multicastLock = wm.createMulticastLock("gyroservermulticastlock");
-            multicastLock.acquire();
 
             // launch receiver thread
             start();
@@ -45,11 +47,6 @@ public class MulticastConnector extends Thread
 
     public void close()
     {
-        if(multicastLock!=null)
-        {
-            multicastLock.release();
-            multicastLock=null;
-        }
         mQuitting=true;
         interrupt();
         try
@@ -58,6 +55,16 @@ public class MulticastConnector extends Thread
         } catch(InterruptedException e)
         {
 
+        }
+    }
+
+    public void setSwingID(int swingID,int netID)
+    {
+        if(swingID!=this.swingID || netID!=this.netID)
+        {
+            this.swingID = swingID;
+            this.netID = netID;
+            forceReloadSocket();
         }
     }
 
@@ -72,23 +79,14 @@ public class MulticastConnector extends Thread
         byte[]dataBuf=new byte[1024];
         DatagramPacket pack=new DatagramPacket(dataBuf,dataBuf.length);
 
-        InetAddress group = null;
-        try
-        {
-            group = InetAddress.getByName("228.227.226.225");
-        } catch(UnknownHostException e)
-        {
-        }
 
         long lastSocketTime=System.currentTimeMillis();
 
 
         while(!mQuitting)
         {
-            if(System.currentTimeMillis()-lastSocketTime>10000)
+            if(System.currentTimeMillis()-lastSocketTime>100000)
             {
-                // reconnect once every 10 seconds or else sleep
-                // does naughty things to us
                 if(socket!=null)
                 {
                     socket.close();
@@ -99,6 +97,13 @@ public class MulticastConnector extends Thread
             {
                 try
                 {
+                    InetAddress group = null;
+                    try
+                    {
+                        group = InetAddress.getByName("239.123."+swingID+"."+netID);
+                    } catch(UnknownHostException e)
+                    {
+                    }
                     lastSocketTime=System.currentTimeMillis();
                     socket = new MulticastSocket(PORT);
                     socket.setSoTimeout(1000);
@@ -128,7 +133,7 @@ public class MulticastConnector extends Thread
                     {
                         dataRecv = packetData;
                         packetAddr = pack.getSocketAddress();
-                        Log.d("multicast", "got multicast:" + packetData);
+                        //Log.d("multicast", "got multicast:" + packetData);
                     }
                 } catch(SocketTimeoutException e)
                 {
@@ -164,7 +169,7 @@ public class MulticastConnector extends Thread
             InetAddress group = null;
             try
             {
-                group = InetAddress.getByName("228.227.226.225");
+                group = InetAddress.getByName("239.123."+swingID+"."+netID);
             } catch(UnknownHostException e)
             {
             }

@@ -2,18 +2,23 @@ package com.mrl.simplegyroserver;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlarmManager;
 import android.app.AlertDialog;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.nfc.NdefMessage;
 import android.nfc.NdefRecord;
 import android.nfc.NfcAdapter;
 import android.nfc.NfcEvent;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.PowerManager;
+import android.provider.Settings;
 import android.support.v4.app.ActivityCompat;
 import android.util.Log;
 import android.view.Menu;
@@ -40,6 +45,7 @@ public class GyroServerStarter extends Activity
     Handler m_Handler;
     private boolean mIsInForegroundMode=true;
 
+    PowerManager.WakeLock wl;
 
     NfcAdapter.CreateNdefMessageCallback mNDEFCallback=new NfcAdapter.CreateNdefMessageCallback()
     {
@@ -63,6 +69,10 @@ public class GyroServerStarter extends Activity
     @Override
     protected void onCreate(Bundle savedInstanceState)
     {
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "gyroserverappwakelock");
+        wl.acquire();
+
         m_Handler=new Handler();
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_gyro_starter);
@@ -77,6 +87,21 @@ public class GyroServerStarter extends Activity
         {
             afterCheckedPermissions();
         }
+        PowerManager powerMan= (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+        {
+            String packageName = getPackageName();
+            if(!powerMan.isIgnoringBatteryOptimizations(packageName))
+            {
+                Intent intent = new Intent();
+                intent.setAction(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                intent.setData(Uri.parse("package:" + packageName));
+                startActivity(intent);
+            }
+        }
+        ServerAliveChecker.start(getBaseContext());
+
+
     }
 
     public void afterCheckedPermissions()
@@ -273,6 +298,7 @@ public class GyroServerStarter extends Activity
     @Override
     public void onDestroy()
     {
+        wl.release();
         m_CodeReader.stopReading();
         m_Handler.removeCallbacksAndMessages(null);
         super.onDestroy();
