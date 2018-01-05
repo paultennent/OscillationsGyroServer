@@ -17,7 +17,7 @@ public class ClientWifiSelector
             // drop the last (check) digit
             String withoutCheck = code.substring(0, code.length() - 1);
             int value = (int) (Long.parseLong(withoutCheck) % (100000000));
-            if(value > 1000000)
+            if(value > 1000000 && value<2000000)
             {
                 // connect to the right wifi network - this codescheme allows for 100 wifis and any number of swings
                 int wifiNum = (value - 1000000) % (1000);

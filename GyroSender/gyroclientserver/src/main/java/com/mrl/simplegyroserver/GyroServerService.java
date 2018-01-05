@@ -31,6 +31,7 @@ import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.TimeZone;
 import java.util.UUID;
@@ -215,10 +216,7 @@ public class GyroServerService extends Service implements SensorEventListener
     //************** BLUETOOTH STUFF *****************/
 
     BluetoothAdapter mBTAdapter;
-    BluetoothSocket mBTSocket;
-    InputStream mBTIn;
-//    OutputStream mBTOut;
-    AsyncOutputStream mBTOut;
+    ArrayList<BTConnection> mBTConnections=new ArrayList<BTConnection>();
 
     class AsyncOutputStream extends Thread
     {
@@ -332,7 +330,93 @@ public class GyroServerService extends Service implements SensorEventListener
 
     }
 
+    class BTConnection
+    {
+        public BluetoothSocket mSocket;
+        public InputStream mIS;
+        public AsyncOutputStream mOS;
 
+        public BTConnection(BluetoothSocket sock)
+        {
+            try
+            {
+                mIS=sock.getInputStream();
+                mOS = new AsyncOutputStream(sock.getOutputStream(),PACKET_SIZE);
+                mSocket=sock;
+            } catch(IOException e)
+            {
+                mSocket=null;
+                mIS=null;
+                mOS=null;
+            }
+        }
+
+        public void close()
+        {
+            try
+            {
+                if(mIS!=null)
+                {
+                    mIS.close();
+                }
+            } catch(IOException e)
+            {
+            }
+            mIS=null;
+            try
+            {
+                if(mOS!=null)
+                {
+                    mOS.close();
+                }
+            } catch(IOException e)
+            {
+            }
+            mOS=null;
+            try
+            {
+                if(mSocket!=null)
+                {
+                    mSocket.close();
+                }
+            } catch(IOException e)
+            {
+            }
+            mSocket=null;
+        }
+
+        boolean isConnected()
+        {
+            if(mSocket!=null && mSocket.isConnected()==false)
+            {
+                try
+                {
+                    mSocket.close();
+                    mSocket=null;
+                } catch(IOException e)
+                {
+                    e.printStackTrace();
+                }
+            }
+            if(mSocket==null)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        void write( byte[] bytes)
+        {
+            try
+            {
+                mOS.write(bytes);
+            } catch(IOException e)
+            {
+                close();
+                Log.d("bt", "error sending");
+            }
+        }
+    }
 
     class BTServerConnector extends Thread
     {
@@ -343,6 +427,8 @@ public class GyroServerService extends Service implements SensorEventListener
         {
             try
             {
+                // sleep before we do anything
+                Thread.sleep(100);
                 mBTServerSocket = mBTAdapter
                         .listenUsingInsecureRfcommWithServiceRecord("Gyro service", BLUETOOTH_UUID);
                 mConnectedSocket = mBTServerSocket.accept();
@@ -359,6 +445,9 @@ public class GyroServerService extends Service implements SensorEventListener
             {
                 e.printStackTrace();
                 closeServerSocket();
+            } catch(InterruptedException e)
+            {
+                e.printStackTrace();
             }
         }
 
@@ -420,44 +509,16 @@ public class GyroServerService extends Service implements SensorEventListener
             }
         }
         mBTAdapter = null;
-        if(mBTIn != null)
+        for(BTConnection c:mBTConnections)
         {
-            try
-            {
-                mBTIn.close();
-            } catch(IOException e)
-            {
-                e.printStackTrace();
-            }
-            mBTIn = null;
+            c.close();
         }
-        if(mBTOut != null)
-        {
-            try
-            {
-                mBTOut.close();
-            } catch(IOException e)
-            {
-                e.printStackTrace();
-            }
-            mBTOut = null;
-        }
-        if(mBTSocket != null)
-        {
-            try
-            {
-                mBTSocket.close();
-            } catch(IOException e)
-            {
-                e.printStackTrace();
-            }
-            mBTSocket = null;
-        }
+        mBTConnections.clear();
     }
 
     void listenBluetooth()
     {
-        if(mBTSocket != null && mBTSocket.isConnected())
+        if(mBTConnections.size()>0)
         {
             sConnectionState |= 0x2;
         } else
@@ -465,93 +526,58 @@ public class GyroServerService extends Service implements SensorEventListener
             sConnectionState &= 0xfd;
         }
 
-        // if we've become disconnected, then close the connection
-        if(mBTSocket != null && !mBTSocket.isConnected())
+        // close any disconnected connections
+        boolean deleted=true;
+        while(deleted)
         {
-            if(mBTOut!=null)
+            deleted=false;
+            for(int c = 0; c < mBTConnections.size(); c++)
             {
-                try
+                if(!mBTConnections.get(c).isConnected())
                 {
-                    mBTOut.close();
-                } catch(IOException e)
-                {
-                    e.printStackTrace();
+                    Log.e("bt:","Removing connection");
+                    mBTConnections.remove(c);
+                    deleted=true;
+                    break;
                 }
             }
-            try
-            {
-                mBTSocket.close();
-            } catch(IOException e)
-            {
-                e.printStackTrace();
-            }
-            mBTSocket = null;
         }
-        // if we're not connected, then listen for new connections
-        if(mBTSocket == null)
+
+        // listen for new connections
+        if(mBTServerConnector == null)
         {
-            if(mBTServerConnector == null)
+            mBTServerConnector = new BTServerConnector();
+            mBTServerConnector.start();
+            Log.d("bt","listen");
+        } else
+        {
+            if(!mBTServerConnector.isAlive())
             {
-                mBTServerConnector = new BTServerConnector();
-                mBTServerConnector.start();
-            } else
-            {
-                if(!mBTServerConnector.isAlive())
+                BluetoothSocket sock = mBTServerConnector.mConnectedSocket;
+                if(sock!=null)
                 {
-                    mBTSocket = mBTServerConnector.mConnectedSocket;
-                    if(mBTSocket != null)
-                    {
-                        try
-                        {
-                            mBTOut = new AsyncOutputStream(mBTSocket.getOutputStream(),PACKET_SIZE);
-                            mBTIn = mBTSocket.getInputStream();
-                            Log.d("bt", "connected");
-                        } catch(IOException e)
-                        {
-                            e.printStackTrace();
-                        }
-                    }
-                    mBTServerConnector = null;
+                    BTConnection conn=new BTConnection(sock);
+                    Log.d("bt", "connected");
+                    mBTConnections.add(conn);
                 }
+                mBTServerConnector = null;
             }
         }
     }
 
     void sendBluetooth()
     {
-        if(mBTSocket != null && mBTSocket.isConnected())
+        for(int c = 0; c < mBTConnections.size(); c++)
         {
-            try
-            {
-                mBTOut.write(mDataBytes);
-            } catch(IOException e)
-            {
-                try
-                {
-                    mBTOut.close();
-                } catch(IOException e1)
-                {
-                    e1.printStackTrace();
-                }
-                try
-                {
-                    mBTSocket.close();
-                } catch(IOException e1)
-                {
-                    e1.printStackTrace();
-                }
-                mBTSocket = null;
-                mBTOut = null;
-                Log.d("bt", "error sending");
-            }
+            mBTConnections.get(c).write(mDataBytes);
         }
     }
 
     /*****************UDP STUFF *********************************/
     DatagramChannel mUDPConnection;
-    SocketAddress mUDPTarget;
+    ArrayList<SocketAddress> mUDPTargets=new ArrayList<SocketAddress>();
     ByteBuffer dataRead = ByteBuffer.allocateDirect(4);
-    long mUDPLastPingTime = 0;
+    ArrayList<Long> mUDPLastPingTimes=new ArrayList<Long>();
     boolean bJustConnected=true;
 
     void openUDP()
@@ -599,26 +625,32 @@ public class GyroServerService extends Service implements SensorEventListener
                 // 'Hi' = send to this address
                 if(dataRead.get(0) == 72 && dataRead.get(1) == 105)
                 {
-                    if(mUDPTarget==null)
+                    if(mUDPTargets.size()==0)
                     {
                         bJustConnected=true;
                     }
-                    mUDPTarget = addr;
-                    mUDPLastPingTime = System.currentTimeMillis();
+                    int lastIndex=mUDPTargets.indexOf(addr);
+                    if(lastIndex==-1)
+                    {
+                        mUDPTargets.add(addr);
+                        mUDPLastPingTimes.add(System.currentTimeMillis());
+                    }else
+                    {
+                        mUDPLastPingTimes.set(lastIndex,System.currentTimeMillis());
+                    }
                 }
                 // 'Qnn' = query swing id n
                 if(dataRead.get(0) == 81 && dataRead.get(1) == 48 + (sSwingID / 10) &&
                         dataRead.get(2) == 48 + (sSwingID % 10))
                 {
                     // clear existing target so we don't flood the world with messages
-                    mUDPTarget = null;
+                    //mUDPTarget = null;
                     // send a response to give our IP address and bluetooth ID
                     // send getSettingsString(this) to them
                     String queryResponse = getSettingsString(this);
                     byte[] bytes = queryResponse.getBytes("UTF-8");
                     mUDPConnection.send(ByteBuffer.wrap(bytes), addr);
                     Log.e("query", "send response:" + queryResponse);
-
                 }
             }
         } catch(IOException e)
@@ -626,11 +658,29 @@ public class GyroServerService extends Service implements SensorEventListener
             // timeout, ignore
         }
         // stop sending UDP if >10s of no pings (saves having a 'bye' packet
-        if(mUDPTarget != null && System.currentTimeMillis() - mUDPLastPingTime > 10000L)
+        long curTime=System.currentTimeMillis();
+        for(int c =0;c<mUDPLastPingTimes.size();c++)
         {
-            mUDPTarget = null;
+            if( curTime-mUDPLastPingTimes.get(c) > 10000L)
+            {
+                mUDPLastPingTimes.set(c,-1L);
+            }
         }
-        if(mUDPTarget == null)
+        boolean deleted=true;
+        while(deleted)
+        {
+            deleted=false;
+            for(int c=0;c<mUDPLastPingTimes.size();c++)
+            {
+                if(mUDPLastPingTimes.get(c)==-1L)
+                {
+                    mUDPLastPingTimes.remove(c);
+                    mUDPTargets.remove(c);
+                }
+            }
+        }
+
+        if(mUDPTargets.size() == 0)
         {
             sConnectionState &= 0xfe;
         } else
@@ -642,14 +692,17 @@ public class GyroServerService extends Service implements SensorEventListener
 
     void sendUDP()
     {
-        if(mUDPTarget != null)
+        if(mUDPTargets.size()!=0)
         {
-            try
+            for(SocketAddress addr:mUDPTargets)
             {
-                int dataLen = mUDPConnection.send(dataByteBuffer, mUDPTarget);
-            } catch(IOException e)
-            {
-                e.printStackTrace();
+                try
+                {
+                    int dataLen = mUDPConnection.send(dataByteBuffer, addr);
+                } catch(IOException e)
+                {
+                    e.printStackTrace();
+                }
             }
         }
     }
@@ -700,19 +753,19 @@ public class GyroServerService extends Service implements SensorEventListener
         {
             mAngle += 2.0f * Math.PI;
         }
-        if(Math.abs(mAccelCorrectionAmount)>60)
+        if(Math.abs(mAccelCorrectionAmount)>1.0)
         {
             mAngle+=mAccelCorrectionAmount;
             mAccelCorrectionAmount=0;
         }
         if(mAccelCorrectionAmount > 0)
         {
-            float correctAmt = Math.min(0.04f * fDt, mAccelCorrectionAmount);
+            float correctAmt = Math.min(0.1f * fDt, mAccelCorrectionAmount);
             mAngle += correctAmt;
             mAccelCorrectionAmount -= correctAmt;
         } else if(mAccelCorrectionAmount < 0)
         {
-            float correctAmt = Math.max(-0.04f * fDt, mAccelCorrectionAmount);
+            float correctAmt = Math.max(-0.1f * fDt, mAccelCorrectionAmount);
             mAngle += correctAmt;
             mAccelCorrectionAmount -= correctAmt;
         }
@@ -740,21 +793,20 @@ public class GyroServerService extends Service implements SensorEventListener
     float mAccelMin = 0;
     float mAngleAtMax = 0;
 
-//    ToneGenerator tg =
-//            new ToneGenerator(AudioManager.STREAM_NOTIFICATION, ToneGenerator.MAX_VOLUME);
-
     public void onRotationVectorData(SensorEvent event)
     {
         SensorManager.getRotationMatrixFromVector(mRotationMatrix, event.values);
         SensorManager.getOrientation(mRotationMatrix, mOrientation);
         // TODO maybe get mag from here?
-        float roll = -mOrientation[1];
+        float roll = mOrientation[1];
         if(bJustConnected)
         {
             mAngle=roll;
             bJustConnected=false;
         }else
         {
+     //       Log.e("acc",mAccelCorrectionAmount+":"+mAngle+":"+roll);
+
             mAccelCorrectionAmount = roll - mAngle;
             sCorrectionAmountDebug = mAccelCorrectionAmount;
         }
@@ -766,7 +818,7 @@ public class GyroServerService extends Service implements SensorEventListener
         float magnitude = (float) Math
                 .sqrt(event.values[0] * event.values[0] + event.values[1] * event.values[1] +
                               event.values[2] * event.values[2]);
-        if(mMagnitudeBufferPos == 0)
+        /*if(mMagnitudeBufferPos == 0)
         {
             mAccelMax = magnitude;
             mAccelMin = magnitude;
@@ -810,7 +862,7 @@ public class GyroServerService extends Service implements SensorEventListener
                     mAccelCorrectionAmount = calcAngle - mAngle;
                 }
             }
-        }
+        }*/
         mAccelLast[0] = event.values[0];
         mAccelLast[1] = event.values[1];
         mAccelLast[2] = event.values[2];

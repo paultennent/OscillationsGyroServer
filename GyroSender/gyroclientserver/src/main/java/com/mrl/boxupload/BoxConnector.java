@@ -13,6 +13,8 @@ import com.box.androidsdk.content.requests.BoxRequestsFile;
 import java.io.*;
 import java.nio.CharBuffer;
 import java.util.ArrayList;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Created by jqm on 24/04/2017.
@@ -29,7 +31,7 @@ public class BoxConnector implements BoxAuthentication.AuthListener
     File boxConfigFile = new File("/sdcard/boxconfig.txt");
     File sourceFolder = new File("/sdcard/vrplayground-logs");
     String uploadTarget = "VRPlayground-Data";
-    String folderID = null;
+    String topFolderID = null;
 
     BoxSession mSession = null;
     BoxApiFolder mFolderApi;
@@ -107,13 +109,13 @@ public class BoxConnector implements BoxAuthentication.AuthListener
     @Override
     public void onAuthFailure(BoxAuthentication.BoxAuthenticationInfo info, Exception ex)
     {
-
+        mSession=null;
     }
 
     @Override
     public void onLoggedOut(BoxAuthentication.BoxAuthenticationInfo info, Exception ex)
     {
-
+        mSession=null;
     }
 
 
@@ -127,17 +129,21 @@ public class BoxConnector implements BoxAuthentication.AuthListener
             {
                 if(boxItem.getName().endsWith(uploadTarget))
                 {
-                    folderID = boxItem.getId();
+                    topFolderID = boxItem.getId();
                 }
                 Log.d("box", "Folder:" + boxItem.getName());
             }
-            Log.d("box", "ID:" + folderID);
+            Log.d("box", "ID:" + topFolderID);
             checkUploadFiles();
         } catch(BoxException e)
         {
             e.printStackTrace();
         }
-
+        if(topFolderID==null)
+        {
+            mSession=null;
+            lastFileMessage = "No box connection";
+        }
     }
 
     void checkUploadFiles()
@@ -174,14 +180,49 @@ public class BoxConnector implements BoxAuthentication.AuthListener
         }
     }
 
+    String getFolderIDForDate(String datestr)
+    {
+        if(mSession != null && topFolderID !=null)
+        {
+            try
+            {
+                BoxFolder folder = mFolderApi.getFolderWithAllItems(topFolderID).send();
+                BoxIteratorItems folderItems = folder.getItemCollection();
+                for(BoxItem boxItem : folderItems)
+                {
+                    if(boxItem instanceof BoxFolder && boxItem.getName().equals(datestr))
+                    {
+                        Log.d("box", "Found date folder:" + boxItem.getName());
+                        return boxItem.getId();
+                    }
+                }
+                BoxFolder newFolder = mFolderApi.getCreateRequest(topFolderID, datestr).send();
+                return newFolder.getId();
+            } catch(BoxException e)
+            {
+                Log.d("box", "failed:" + e.toString());
+                e.printStackTrace();
+            }
+        }
+        return null;
+    }
+
     void tryUploadFile(final File curFile)
     {
-        if(mSession != null && folderID!=null)
+        String folderID=topFolderID;
+        Pattern p = Pattern.compile("(\\d\\d\\d\\d\\d\\d\\d\\d).*");
+        if(mSession != null && topFolderID !=null)
         {
             final String curName = curFile.getAbsolutePath();
 
             try
             {
+
+                Matcher datematch=p.matcher(curFile.getName());
+                if(datematch.matches())
+                {
+                    folderID=getFolderIDForDate(datematch.group(1));
+                }
                 BoxApiFile fileApi = new BoxApiFile(mSession);
                 BoxRequestsFile.UploadFile request = fileApi.getUploadRequest(curFile, folderID);
 
