@@ -47,6 +47,8 @@ public class GyroServerStarter extends Activity
 
     PowerManager.WakeLock wl;
 
+    Runnable serviceStatusRunnable;
+
     NfcAdapter.CreateNdefMessageCallback mNDEFCallback=new NfcAdapter.CreateNdefMessageCallback()
     {
         @Override
@@ -69,6 +71,15 @@ public class GyroServerStarter extends Activity
     @Override
     protected void onCreate(Bundle savedInstanceState)
     {
+        serviceStatusRunnable=new Runnable()
+        {
+            @Override
+            public void run()
+            {
+                checkServiceStatus();
+            }
+        };
+
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "gyroserverappwakelock");
         wl.acquire();
@@ -233,14 +244,7 @@ public class GyroServerStarter extends Activity
         }
         if(mIsInForegroundMode==false)
         {
-            m_Handler.postDelayed(new Runnable()
-            {
-                @Override
-                public void run()
-                {
-                    checkServiceStatus();
-                }
-            }, 1000);
+            m_Handler.postDelayed(serviceStatusRunnable, 1000);
             return;
         }
         if(m_CodeReader.isReading())
@@ -284,14 +288,7 @@ public class GyroServerStarter extends Activity
             tv.setText("Service not running");
             b.setText("Start service");
         }
-        m_Handler.postDelayed(new Runnable()
-        {
-            @Override
-            public void run()
-            {
-                checkServiceStatus();
-            }
-        }, 100);
+        m_Handler.postDelayed(serviceStatusRunnable, 100);
 
     }
 

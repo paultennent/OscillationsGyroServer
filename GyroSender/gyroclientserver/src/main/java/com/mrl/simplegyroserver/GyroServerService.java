@@ -112,6 +112,7 @@ public class GyroServerService extends Service implements SensorEventListener
                 initSensorThread();
             }
         };
+        mSensorThread.setPriority(Thread.MAX_PRIORITY);
         mSensorThread.start();
     }
 
@@ -432,11 +433,26 @@ public class GyroServerService extends Service implements SensorEventListener
                 mBTServerSocket = mBTAdapter
                         .listenUsingInsecureRfcommWithServiceRecord("Gyro service", BLUETOOTH_UUID);
                 mConnectedSocket = mBTServerSocket.accept();
+                Log.e("bt:","bt: accept "+mConnectedSocket.getRemoteDevice().getAddress());
+
                 closeServerSocket();
                 // pause to make sure we're connected
                 try
                 {
-                    Thread.sleep(10);
+                    boolean connected=false;
+                    for(int c=0;c<50;c++)
+                    {
+                        Thread.sleep(10);
+                       if(mConnectedSocket.isConnected())
+                       {
+                           connected=true;
+                           break;
+                       }
+                    }
+                    if(!connected)
+                    {
+                        Log.e("bt:","couldn't connect");
+                    }
                 } catch(InterruptedException e)
                 {
                     e.printStackTrace();
@@ -449,6 +465,7 @@ public class GyroServerService extends Service implements SensorEventListener
             {
                 e.printStackTrace();
             }
+            Log.e("bt:","bt: endthread");
         }
 
         void closeServerSocket()
@@ -588,6 +605,7 @@ public class GyroServerService extends Service implements SensorEventListener
             mUDPConnection = DatagramChannel.open();
             mUDPConnection.configureBlocking(false);
             mUDPConnection.socket().bind(new InetSocketAddress(UDP_PORT));
+            mUDPConnection.socket().setSendBufferSize(PACKET_SIZE*4);
         } catch(IOException e)
         {
             e.printStackTrace();
@@ -699,6 +717,7 @@ public class GyroServerService extends Service implements SensorEventListener
                 try
                 {
                     int dataLen = mUDPConnection.send(dataByteBuffer, addr);
+                    dataByteBuffer.rewind();
                 } catch(IOException e)
                 {
                     e.printStackTrace();
@@ -901,6 +920,7 @@ public class GyroServerService extends Service implements SensorEventListener
     public void onSensorChanged(SensorEvent event)
     {
         mTimestamp = event.timestamp;
+        //if(true)return;
         if(mShuttingDown) return;
         if(mFirstTime)
         {
