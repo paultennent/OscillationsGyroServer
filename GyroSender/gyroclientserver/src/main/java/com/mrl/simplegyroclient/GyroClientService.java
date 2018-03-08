@@ -18,13 +18,13 @@ import android.nfc.tech.IsoDep;
 import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.IBinder;
-import android.os.PowerManager;
 import android.support.v4.app.ActivityCompat;
 import android.util.Log;
 import android.util.Pair;
 
 import com.mrl.flashcamerasource.MulticastConnector;
 import com.mrl.flashcamerasource.ServiceWifiChecker;
+import com.mrl.simplegyroserver.GyroServerService;
 
 import java.io.*;
 import java.net.*;
@@ -86,7 +86,7 @@ public class GyroClientService extends Service
         mMainThreadHandler = new Handler();
         sRunning = true;
         Log.d("woo", "create");
-        mServerThread = new Thread()
+        mServerThread = new Thread("ServerThread")
         {
             @Override
             public void run()
@@ -139,20 +139,27 @@ public class GyroClientService extends Service
     }
 
 
-    class BTClientConnector extends Thread
+    class BTReceiver extends Thread
     {
+
+        final byte[] currentPacket;
+        volatile long lastTime;
+
         BluetoothDevice device;
         BluetoothSocket connection;
         InputStream inputStream;
         BluetoothAdapter adp;
-        String addr;
+        String mAddr;
 
-        public BTClientConnector(BluetoothAdapter adaptor, String addr)
+        public BTReceiver(BluetoothAdapter adaptor, String addr)
         {
-            super();
+            super("bt:"+addr);
+            currentPacket=new byte[GyroServerService.PACKET_SIZE];
+            lastTime=System.nanoTime()-100000000L;
             connection = null;
             adp = adaptor;
-            this.addr = addr;
+            mAddr = addr;
+            start();
         }
 
         public void run()
@@ -161,47 +168,51 @@ public class GyroClientService extends Service
             try
             {
                 adp.cancelDiscovery();
-                device = adp.getRemoteDevice(addr.toUpperCase());
+                device = adp.getRemoteDevice(mAddr.toUpperCase());
                 connection =
                         device.createInsecureRfcommSocketToServiceRecord(BLUETOOTH_UUID);
 //                connection = mSingletonSocket;
                 connection.connect();
                 inputStream = connection.getInputStream();
-            } catch(IOException e)
-            {
-                Log.d("bt", "can't connect");
-//                 e.printStackTrace();
-                if(inputStream != null)
+                byte[]recvBytes=new byte[GyroServerService.PACKET_SIZE];
+                while(!interrupted())
                 {
-                    try
+                    // read into our buffer
+                    inputStream.read(recvBytes, 0, 24);
+                    lastTime=System.nanoTime();
+                    synchronized (currentPacket)
                     {
-                        inputStream.close();
-                    } catch(IOException e1)
-                    {
-                        e1.printStackTrace();
+                        System.arraycopy(recvBytes,0,currentPacket,0,recvBytes.length);
                     }
-                }
-                if(connection != null)
-                {
-                    try
-                    {
-                        connection.close();
-                    } catch(IOException e1)
-                    {
-                        e1.printStackTrace();
-                    }
-                }
-                connection = null;
-                inputStream = null;
-            }
 
+                }
+            } catch(IOException e) {
+                Log.d("bt", "can't connect");
+            }
+            close();
         }
 
-        public void shutdownConnectThread()
+        public void close()
         {
-            interrupt();
-            if(Thread.currentThread() != BTClientConnector.this && isAlive())
+            if(Thread.currentThread() != BTReceiver.this && isAlive())
             {
+                interrupt();
+                try
+                {
+                    join(100);
+                } catch(InterruptedException e)
+                {
+                    e.printStackTrace();
+                }
+                // if we close during connection attempt need to cancel it
+                if(isAlive() && connection!=null)
+                {
+                    try {
+                        connection.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
                 try
                 {
                     join(100);
@@ -210,30 +221,157 @@ public class GyroClientService extends Service
                     e.printStackTrace();
                 }
             }
+
+            // close all the sockets and streams
+            synchronized (BTReceiver.this) {
+                if (inputStream != null) {
+                    try {
+                        inputStream.close();
+                    } catch (IOException e1) {
+                        e1.printStackTrace();
+                    }
+                }
+                if (connection != null) {
+                    try {
+                        connection.close();
+                    } catch (IOException e1) {
+                        e1.printStackTrace();
+                    }
+                }
+            }
         }
+
+        public void getCurrentBytes(byte[] buffer)
+        {
+            synchronized (currentPacket)
+            {
+                System.arraycopy(currentPacket,0,buffer,0,currentPacket.length);
+            }
+        }
+
+        public long timeSinceLast()
+        {
+            return System.nanoTime()-lastTime;
+        }
+
+
     }
 
 
     int mPort;
     String mIPAddr;
     String mBTAddr;
+    
+    class UDPReceiver extends Thread
+    {
+        private SocketAddress mAddr;
+        final byte[] currentPacket;
+        volatile long lastTime;
+        volatile int serverMessage;
+
+        public UDPReceiver(SocketAddress addr)
+        {
+            super("udp:"+addr);
+            mAddr=addr;
+            currentPacket=new byte[GyroServerService.PACKET_SIZE];
+            lastTime=System.nanoTime();
+            start();
+        }
+
+        public long timeSinceLast()
+        {
+            return System.nanoTime()-lastTime;
+        }
+
+        public void close()
+        {
+            interrupt();
+            try {
+                join(100);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        public void run()
+        {
+            byte[] msgBytes={(byte)72,(byte)105,(byte)0,(byte)0};
+            byte[] pollBytes={(byte)72,(byte)105};
+            byte[]recvBytes=new byte[GyroServerService.PACKET_SIZE];
+            try {
+                DatagramPacket msgPacket=new DatagramPacket(msgBytes,4,mAddr);
+                DatagramPacket pollPacket=new DatagramPacket(pollBytes,2,mAddr);
+                DatagramPacket recvPacket=new DatagramPacket(recvBytes,recvBytes.length);
+                long nextPollTime=System.nanoTime();
+                DatagramSocket sock=new DatagramSocket();
+                sock.setSoTimeout(10);
+                while(!interrupted())
+                {
+                    long curTime=System.nanoTime();
+                    if(curTime>nextPollTime)
+                    {
+                        sock.send(pollPacket);
+                        nextPollTime=curTime+10000000L;
+                    }
+                    // send a messsge back to the server
+                    // e.g. to reset the clock
+                    if(serverMessage !=0)
+                    {
+                        ByteBuffer bb=ByteBuffer.wrap(msgBytes);
+                        bb.putInt(serverMessage);
+                        sock.send(msgPacket);
+                        serverMessage=0;
+                    }
+                    try {
+                        sock.receive(recvPacket);
+
+                        lastTime=System.nanoTime();
+                        // got a packet - set this as the current packet
+                        synchronized (currentPacket)
+                        {
+                            System.arraycopy(recvBytes,0,currentPacket,0,recvBytes.length);
+                        }
+                    }catch(SocketTimeoutException e) {
+                        // timeout - do nothing
+                    }
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+        public void getCurrentBytes(byte[] buffer)
+        {
+            synchronized (currentPacket)
+            {
+                System.arraycopy(currentPacket,0,buffer,0,currentPacket.length);
+            }
+        }
+
+        public void setServerMessage(int msg)
+        {
+            serverMessage=msg;
+        }
+    }
 
     public void serverThread()
     {
-        BTClientConnector btConnector = null;
+        BTReceiver btConnector = null;
 
 
-        DatagramChannel remoteConnection = null;
+        UDPReceiver remoteUDPConnection=null;
+        BTReceiver remoteBTConnection=null;
+//        DatagramChannel remoteConnection = null;
         DatagramChannel localConnection = null;
         try
         {
-            remoteConnection = DatagramChannel.open();
-            remoteConnection.socket().setSoTimeout(1);
-            remoteConnection.configureBlocking(false);
+//            remoteConnection = DatagramChannel.open();
+//            remoteConnection.socket().setSoTimeout(1);
+//            remoteConnection.configureBlocking(false);
 
             localConnection = DatagramChannel.open();
             localConnection.connect(new InetSocketAddress("127.0.0.1", LOCAL_PORT));
-//            localConnection.configureBlocking(false);
+            localConnection.configureBlocking(false);
 //            localConnection.socket().bind(new InetSocketAddress(LOCAL_PORT));
         } catch(IOException e)
         {
@@ -247,88 +385,74 @@ public class GyroClientService extends Service
         long udpLastTime = System.currentTimeMillis();
         long udpPollTime = udpLastTime - 1000;
 
-
         int sendErrorCounter = 0;
 
         BluetoothManager mg = (BluetoothManager) getSystemService(BLUETOOTH_SERVICE);
         BluetoothAdapter adp = mg.getAdapter();
-        ByteBuffer dataPacket = ByteBuffer.allocate(32);
+        ByteBuffer localMessage= ByteBuffer.allocateDirect(4);
 
+        InetSocketAddress remoteAddr;
 
-        ByteBuffer pollPacket = ByteBuffer.allocate(4);
-        pollPacket.put((byte) 72);
-        pollPacket.put((byte) 105);
-        InetSocketAddress remoteAddr = null;
-
-        BluetoothSocket btConnection = null;
-        InputStream btInputStream = null;
 
         long lastTimestampBT = 0;
         long lastTimestampUDP = 0;
 
-        long loopsSinceLastBT = 0;
 
-        boolean tryBTConnection = true;
 
         boolean needsWifiCheck =false;
-        boolean settingsFromWifi=false;
 
+        byte[] udpPacket=new byte[GyroServerService.PACKET_SIZE+8];
+        byte[] btPacket=new byte[GyroServerService.PACKET_SIZE+8];
+
+        long lastSendTime=System.nanoTime();
+
+        int connectionState=0;
         while(!mQuitting && !mServerThread.isInterrupted())
         {
-            long curTime = System.currentTimeMillis();
-
-            int connectionState = 0;
-            if(curTime - udpLastTime < 500) connectionState |= 1;
-            if(btConnection != null && btConnection.isConnected() && loopsSinceLastBT < 1000)
-                connectionState |= 2;
-            if(sendErrorCounter < 50) connectionState |= 4;
-            if(btConnector != null) connectionState |= 8;
+            long startTime=System.nanoTime();
             sConnectionState = connectionState;
-
+            // settings changed - re connect to swing
             if(sSettingsDirty)
             {
-                sSettingsDirty = false;
-                if(settingsFromWifi)
-                {
-                    settingsFromWifi=false;
-                }else
-                {
-                    needsWifiCheck = true;
-                }
+                needsWifiCheck = true;
                 readSettings();
-                try
-                {
-                    remoteAddr = new InetSocketAddress(InetAddress.getByName(mIPAddr), mPort);
-                } catch(UnknownHostException e)
-                {
-                    e.printStackTrace();
+                sSettingsDirty=false;
+                if(remoteUDPConnection!=null) {
+                    remoteUDPConnection.close();
+                    remoteUDPConnection=null;
                 }
-                // new settings - try bluetooth reconnect
-                tryBTConnection = true;
-                if(btConnection != null)
+                if(remoteBTConnection!=null)
                 {
-                    try
-                    {
-                        btConnection.close();
-                    } catch(IOException e)
-                    {
-                    }
+                    remoteBTConnection.close();
+                    remoteBTConnection=null;
                 }
             }
-            // if we are not connected - check wifi, check address etc.
+
+            // if we haven't heard from currently connected swing for several seconds
+            // then query everything to check it is okay
+            // if we need a wifi check
             if(needsWifiCheck || mIPAddr==null || mIPAddr.compareToIgnoreCase("1.1.1.1")==0 || (connectionState & 3) == 0)
             {
                 if( sWifiNum!=-1)
                 {
                     if(ServiceWifiChecker.checkWifi(this, sWifiNum))
                     {
+                        // on the right wifi, now find the swing settings
                         if(sSwingNum != -1)
                         {
                             // need to check wifi again if we don't get a response, otherwise we've found the right swing
                             if(connectToSwing(sSwingNum))
                             {
-                                settingsFromWifi=true;
                                 needsWifiCheck=false;
+                                if(remoteUDPConnection!=null) {
+                                    remoteUDPConnection.close();
+                                    remoteUDPConnection=null;
+                                }
+                                if(remoteBTConnection!=null)
+                                {
+                                    remoteBTConnection.close();
+                                    remoteBTConnection=null;
+                                }
                             }
                             // poll only in 2 seconds
 //                            udpPollTime=curTime+1000;
@@ -343,172 +467,101 @@ public class GyroClientService extends Service
                 }
             }
 
-            if((connectionState & 3) == 0)
+            if(remoteUDPConnection==null && !needsWifiCheck && !sSettingsDirty)
             {
-                if(btConnection != null && btConnection.isConnected())
-                {
-                    try
-                    {
-                        btConnection.close();
-                        btConnection = null;
-                    } catch(IOException e)
-                    {
-                        e.printStackTrace();
-                    }
-                }
-//                Log.d("bt","connectionState-check:"+btConnection+":"+btConnection.isConnected());
-                tryBTConnection = true;
-            }
-
-            // we would try bt connection any time it is dropped, but it causes jitters if we do
-            // so only do on startup or settings change
-            if(tryBTConnection && (btConnection == null || btConnection.isConnected() == false)
-                    && mBTAddr.compareToIgnoreCase("00:00:00:00:00:00")!=0)
-            {
-                // connector object tries to do BT connection (this takes time so is in thread)
-                if(btConnector == null )
-                {
-                    btConnector = new BTClientConnector(adp, mBTAddr.toUpperCase());
-                    btConnector.start();
-                    Log.d("bt", "try bt connection");
-                } else
-                {
-                    // when the connection thread dies, we may or may not have a good connection
-                    // just copy across whatever we have
-                    if(!btConnector.isAlive())
-                    {
-                        loopsSinceLastBT = 0;
-                        btConnection = btConnector.connection;
-                        btInputStream = btConnector.inputStream;
-                        btConnector = null;
-                        tryBTConnection = false;
-                    }
-                }
-            }
-            if(curTime - udpPollTime >= 1000)
-            {
-                udpPollTime = curTime;
-                try
-                {
-                    pollPacket.rewind();
-                    remoteConnection.send(pollPacket, remoteAddr);
-                } catch(IOException e)
-                {
-                    Log.d("poll", "failed");
-                }
-            }
-            try
-            {
-                try
-                {
-                    Thread.sleep(1);
-                } catch(InterruptedException e)
-                {
-                }
-                if(btConnection != null && btConnection.isConnected() && btInputStream != null &&
-                        btInputStream.available() >= 24)
-                {
-                    dataPacket.rewind();
-                    btInputStream.read(dataPacket.array(), 0, 24);
-                    dataPacket.rewind();
-                    lastTimestampBT = dataPacket.getLong(16);
-                    if(lastTimestampBT > lastTimestampUDP)
-                    {
-                        if(dispatchPacket(localConnection, dataPacket))
-                        {
-                            sendErrorCounter -= 1;
-                            if(sendErrorCounter < 0) sendErrorCounter = 0;
-                        } else
-                        {
-                            sendErrorCounter += 2;
-                        }
-                    }
-                    loopsSinceLastBT = 0;
-                } else
-                {
-                    if(btConnection != null) loopsSinceLastBT += 1;
-                }
-                dataPacket.rewind();
-                SocketAddress serverAddr = remoteConnection.receive(dataPacket);
-                if(serverAddr != null)
-                {
-//                    Log.d("rcv",""+dataPacket);
-                    udpLastTime = curTime;
-                    dataPacket.rewind();
-                    lastTimestampUDP = dataPacket.getLong(16);
-                    if(lastTimestampUDP > lastTimestampBT)
-                    {
-                        if(dispatchPacket(localConnection, dataPacket))
-                        {
-                            sendErrorCounter -= 1;
-                            if(sendErrorCounter < 0) sendErrorCounter = 0;
-                        } else
-                        {
-                            sendErrorCounter += 2;
-                        }
-                    }
-                }
-                if(sendErrorCounter > 1000 && !mQuitting && false)
-                {
-                    Log.d("snd", "failed for 1000 messages , shutting down");
-                    mQuitting = true;
-                    // stop service (on main thread) if we haven't been able to send to anyone for 10 seconds
-                    mMainThreadHandler.post(new Runnable()
-                    {
-                        @Override
-                        public void run()
-                        {
-                            stopSelf();
-                        }
-                    });
-                    sendErrorCounter = 0;
-                }
-            } catch(IOException e)
-            {
-                if(e instanceof java.nio.channels.ClosedByInterruptException)
-                {
-                    // ignore - thread is being closed
-                } else
-                {
+                try {
+                    remoteAddr = new InetSocketAddress(InetAddress.getByName(mIPAddr), mPort);
+                    remoteUDPConnection=new UDPReceiver(remoteAddr);
+                } catch (UnknownHostException e) {
                     e.printStackTrace();
                 }
             }
+            if(remoteBTConnection==null && !needsWifiCheck && !sSettingsDirty)
+            {
+                remoteBTConnection=new BTReceiver(adp, mBTAddr.toUpperCase());
+            }
+            if(remoteBTConnection!=null)
+            {
+                if(!remoteBTConnection.isAlive())
+                {
+                    connectionState&=0xfd;
+                    remoteBTConnection=null;
+                }else
+                {
+                    if(remoteBTConnection.timeSinceLast()>1000000000L)
+                    {
+                        connectionState&=0xfd;
+                    }else {
+                        connectionState |= 0x02;
+                    }
+                    remoteBTConnection.getCurrentBytes(btPacket);
+                }
+            }
+            if(remoteUDPConnection!=null)
+            {
+                if(remoteUDPConnection.timeSinceLast()>1000000000L)
+                {
+                    connectionState&=0xfe;
+                }else
+                {
+                    connectionState|=1;
+                }
+                remoteUDPConnection.getCurrentBytes(udpPacket);
+            }
+            if((connectionState&3)!=0)
+            {
+                lastTimestampBT = ByteBuffer.wrap(btPacket).getLong(16);
+                lastTimestampUDP = ByteBuffer.wrap(udpPacket).getLong(16);
+                if(lastTimestampBT > lastTimestampUDP || (connectionState&1)==0)
+                {
+                    dispatchPacket(localConnection, ByteBuffer.wrap(btPacket));
+                }else if(lastTimestampUDP>lastTimestampBT || (connectionState&2)==0)
+                {
+                    dispatchPacket(localConnection, ByteBuffer.wrap(udpPacket));
+                }
+            }
 
-        }
-        // ending - close bluetooth
-        if(btConnection != null)
-        {
+            // if there is anything sent back to us on the local connection
+            // then ping it back to the server as 2 bytes on to the ping message
             try
             {
-                if(btInputStream != null)
+                localMessage.clear();
+                localConnection.receive(localMessage);
+                // first 2 bytes
+                if(localMessage.position()>=4)
                 {
-                    btInputStream.close();
+                    int msg = localMessage.getInt();
+                    remoteUDPConnection.setServerMessage(msg);
                 }
-                btConnection.close();
-            } catch(IOException e)
+            }catch(SocketTimeoutException e)
             {
+                // no message
+            }
+            catch (IOException e) {
                 e.printStackTrace();
             }
+
+            // sleep for 100th second
+            long elapsedNanos = System.nanoTime() - startTime;
+            long sleepNanos = 10000000L - elapsedNanos;
+            if (sleepNanos > 0) {
+                long sleepMillis = sleepNanos / 1000000L;
+                sleepNanos -= sleepMillis * 1000000L;
+                try {
+                    Thread.sleep(sleepMillis, (int) sleepNanos);
+                } catch (InterruptedException e) {
+                }
+            }
         }
-        if(btConnector != null)
-        {
-            btConnector.shutdownConnectThread();
+        if(remoteUDPConnection!=null) {
+            remoteUDPConnection.close();
+            remoteUDPConnection = null;
         }
-        // close other sockets
-        try
-        {
-            remoteConnection.close();
-        } catch(IOException e)
-        {
-            e.printStackTrace();
+        if(remoteBTConnection!=null) {
+            remoteBTConnection.close();
+            remoteBTConnection= null;
         }
-        try
-        {
-            localConnection.close();
-        } catch(IOException e)
-        {
-            e.printStackTrace();
-        }
+
     }
 
     long lastBatteryTime = 0;
@@ -586,6 +639,8 @@ public class GyroClientService extends Service
         if(connectorData.first!=null && connectorData.first.length()>0)
         {
             setSettingsFromText(this,connectorData.first,true);
+            readSettings();
+            sSettingsDirty=false;
             return true;
         }
         return false;

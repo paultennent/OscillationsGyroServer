@@ -15,18 +15,17 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
-import android.media.AudioManager;
-import android.media.ToneGenerator;
 import android.net.wifi.WifiManager;
 import android.os.*;
 import android.util.Log;
-import android.util.Pair;
 
 import com.mrl.flashcamerasource.MulticastConnector;
 import com.mrl.flashcamerasource.ServiceWifiChecker;
 import com.mrl.simplegyroclient.R;
 
 import java.io.*;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
@@ -35,7 +34,6 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.TimeZone;
 import java.util.UUID;
-import java.util.concurrent.locks.Lock;
 
 public class GyroServerService extends Service implements SensorEventListener
 {
@@ -112,7 +110,7 @@ public class GyroServerService extends Service implements SensorEventListener
                 initSensorThread();
             }
         };
-        mSensorThread.setPriority(Thread.MAX_PRIORITY);
+//        mSensorThread.setPriority(Thread.MAX_PRIORITY);
         mSensorThread.start();
     }
 
@@ -211,7 +209,12 @@ public class GyroServerService extends Service implements SensorEventListener
         sm.unregisterListener(this);
         mReadingSensors=false;
         sConnectionState=0;
-
+        mSensorEventHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                disconnectedHandler();
+            }
+        }, 100);
     }
 
     //************** BLUETOOTH STUFF *****************/
@@ -219,54 +222,52 @@ public class GyroServerService extends Service implements SensorEventListener
     BluetoothAdapter mBTAdapter;
     ArrayList<BTConnection> mBTConnections=new ArrayList<BTConnection>();
 
-    class AsyncOutputStream extends Thread
+    // just send messages at 50hz, last one we have
+    class YhreadedBTSender extends Thread
     {
-        Object sendEvent=new Object();
-        byte[] buffer;
-        int outSize;
-        volatile boolean dataReady;
+        byte[] internalBuf;
+        void copyPacketBuffer(byte[] buffer)
+        {
+            synchronized (internalBuf) {
+                System.arraycopy(buffer, 0, internalBuf, 0, PACKET_SIZE);
+            }
+        }
+
         OutputStream mStr;
 
-        public AsyncOutputStream(OutputStream str, int bufSize)
+        public YhreadedBTSender(OutputStream str)
         {
+            super("BTOut");
+            internalBuf=new byte[PACKET_SIZE];
             mStr = str;
-            buffer = new byte[bufSize];
             start();
         }
 
-        public void run()
-        {
-            byte[] tempBuf = new byte[buffer.length];
-            int tempSize=0;
-            try
-            {
-                while(!interrupted())
-                {
-                    if(dataReady)
-                    {
-                        synchronized(this)
-                        {
-                            System.arraycopy(buffer, 0, tempBuf, 0, outSize);
-                            dataReady = false;
-                            tempSize=outSize;
-                        }
-                        mStr.write(tempBuf,0,outSize);
-                    }else
-                    {
-                        try
-                        {
-                            synchronized(sendEvent)
-                            {
-                                sendEvent.wait(1000);
-                            }
-                        } catch(InterruptedException e)
-                        {
-                            e.printStackTrace();
-                        }
+        public void run() {
+            byte[] buf2 = new byte[PACKET_SIZE];
+            try {
+                while (true) {
+                    long startTime = System.nanoTime();
+
+                    synchronized (internalBuf) {
+                        System.arraycopy(internalBuf, 0, buf2, 0, PACKET_SIZE);
+                    }
+                    mStr.write(internalBuf, 0, PACKET_SIZE);
+                    mStr.flush();
+
+                    long elapsedNanos = System.nanoTime() - startTime;
+                    long sleepNanos = 20000000L - elapsedNanos;
+                    if (sleepNanos > 0) {
+                        long sleepMillis = sleepNanos / 1000000L;
+                        sleepNanos -= sleepMillis * 1000000L;
+                        Thread.sleep(sleepMillis, (int) sleepNanos);
                     }
                 }
-            } catch(IOException e)
-            {
+            }
+            catch (InterruptedException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
             }
             synchronized(this)
             {
@@ -281,28 +282,6 @@ public class GyroServerService extends Service implements SensorEventListener
             }
         }
 
-        public boolean write(byte[] thisBuf) throws IOException
-        {
-            if(mStr == null)
-            {
-                return false;
-            }
-            synchronized(this)
-            {
-                if(dataReady)
-                {
-                    return false;
-                }
-                outSize=thisBuf.length;
-                System.arraycopy(thisBuf, 0, buffer, 0, outSize);
-                dataReady = true;
-                synchronized(sendEvent)
-                {
-                    sendEvent.notifyAll();
-                };
-            }
-            return true;
-        }
 
         public boolean closed()
         {
@@ -335,14 +314,14 @@ public class GyroServerService extends Service implements SensorEventListener
     {
         public BluetoothSocket mSocket;
         public InputStream mIS;
-        public AsyncOutputStream mOS;
+        public YhreadedBTSender mOS;
 
         public BTConnection(BluetoothSocket sock)
         {
             try
             {
                 mIS=sock.getInputStream();
-                mOS = new AsyncOutputStream(sock.getOutputStream(),PACKET_SIZE);
+                mOS = new YhreadedBTSender(sock.getOutputStream());
                 mSocket=sock;
             } catch(IOException e)
             {
@@ -408,14 +387,7 @@ public class GyroServerService extends Service implements SensorEventListener
 
         void write( byte[] bytes)
         {
-            try
-            {
-                mOS.write(bytes);
-            } catch(IOException e)
-            {
-                close();
-                Log.d("bt", "error sending");
-            }
+            mOS.copyPacketBuffer(bytes);
         }
     }
 
@@ -423,6 +395,11 @@ public class GyroServerService extends Service implements SensorEventListener
     {
         public BluetoothSocket mConnectedSocket = null;
         private BluetoothServerSocket mBTServerSocket;
+
+        public BTServerConnector()
+        {
+            super("BTServerConnector");
+        }
 
         public void run()
         {
@@ -595,7 +572,74 @@ public class GyroServerService extends Service implements SensorEventListener
     ArrayList<SocketAddress> mUDPTargets=new ArrayList<SocketAddress>();
     ByteBuffer dataRead = ByteBuffer.allocateDirect(4);
     ArrayList<Long> mUDPLastPingTimes=new ArrayList<Long>();
+    ArrayList<ThreadedUDPSender> mUDPSenders=new ArrayList<ThreadedUDPSender>();
     boolean bJustConnected=true;
+
+    class ThreadedUDPSender extends Thread
+    {
+        public boolean killed=false;
+        SocketAddress mAddr;
+
+        byte[] internalBuf;
+
+        public ThreadedUDPSender(SocketAddress addr)
+        {
+            super("UDPSender:"+addr);
+            setPriority(Thread.MAX_PRIORITY);
+            mAddr=addr;
+            internalBuf=new byte[PACKET_SIZE];
+            start();
+        }
+
+        public void run()
+        {
+            // send once per 100th of a second
+            byte[] buf2=new byte[PACKET_SIZE];
+            try {
+                DatagramSocket sock=new DatagramSocket();
+                sock.setReceiveBufferSize(1);
+                sock.setSendBufferSize(PACKET_SIZE*8);
+                DatagramPacket pack=new DatagramPacket(buf2,PACKET_SIZE,mAddr);
+                while(true) {
+                    long startTime=System.nanoTime();
+                    synchronized (internalBuf) {
+                        System.arraycopy(internalBuf,0, buf2, 0, PACKET_SIZE);
+                    }
+                    sock.send(pack);
+                    long elapsedNanos=System.nanoTime()-startTime;
+                    long sleepNanos=10000000L-elapsedNanos;
+                    if(sleepNanos>0) {
+                        long sleepMillis = sleepNanos / 1000000L;
+                        sleepNanos -= sleepMillis * 1000000L;
+                        Thread.sleep(sleepMillis, (int)sleepNanos);
+                    }
+                }
+            } catch (InterruptedException e) {
+                // interrupt this thread to kill it
+            }
+            catch (IOException e) {
+                e.printStackTrace();
+            }
+            killed=true;
+        }
+
+        void copyPacketBuffer(byte[] buffer)
+        {
+            synchronized (internalBuf) {
+                System.arraycopy(buffer, 0, internalBuf, 0, PACKET_SIZE);
+            }
+        }
+
+        void close()
+        {
+            interrupt();
+            try {
+                join(500);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
 
     void openUDP()
     {
@@ -625,6 +669,11 @@ public class GyroServerService extends Service implements SensorEventListener
             }
         }
         mUDPConnection = null;
+        for(ThreadedUDPSender snd:mUDPSenders)
+        {
+            snd.close();
+        }
+        mUDPSenders.clear();
     }
 
     void listenUDP()
@@ -637,30 +686,41 @@ public class GyroServerService extends Service implements SensorEventListener
         {
             dataRead.clear();
             SocketAddress addr = mUDPConnection.receive(dataRead);
-            if(addr != null && dataRead.position() >= 2)
-            {
+            if (addr != null && dataRead.position() >= 2) {
                 dataRead.flip();
                 // 'Hi' = send to this address
-                if(dataRead.get(0) == 72 && dataRead.get(1) == 105)
-                {
-                    if(mUDPTargets.size()==0)
-                    {
-                        bJustConnected=true;
+                if (dataRead.get(0) == 72 && dataRead.get(1) == 105) {
+                    if (mUDPTargets.size() == 0) {
+                        bJustConnected = true;
                     }
-                    int lastIndex=mUDPTargets.indexOf(addr);
-                    if(lastIndex==-1)
-                    {
+                    int lastIndex = mUDPTargets.indexOf(addr);
+                    if (lastIndex == -1) {
                         mUDPTargets.add(addr);
                         mUDPLastPingTimes.add(System.currentTimeMillis());
-                    }else
-                    {
-                        mUDPLastPingTimes.set(lastIndex,System.currentTimeMillis());
+                        mUDPSenders.add(new ThreadedUDPSender(addr));
+                        //Log.d("Ping:", "*" + addr);
+                    } else {
+                        mUDPLastPingTimes.set(lastIndex, System.currentTimeMillis());
+                        //Log.d("Ping:", addr + ":" + mUDPTargets.get(lastIndex));
                     }
+                    // if it is a 3+ byte message, this is a command to do something
+                    //
+                    if(dataRead.limit()>=3)
+                    {
+                        switch(dataRead.get(2))
+                        {
+                            case 1:
+                                // reset clock timestamp
+                                mTimestampOffset=-mTimestamp;
+                                break;
+                        }
+                    }
+
+
                 }
                 // 'Qnn' = query swing id n
-                if(dataRead.get(0) == 81 && dataRead.get(1) == 48 + (sSwingID / 10) &&
-                        dataRead.get(2) == 48 + (sSwingID % 10))
-                {
+                if (dataRead.get(0) == 81 && dataRead.get(1) == 48 + (sSwingID / 10) &&
+                        dataRead.get(2) == 48 + (sSwingID % 10)) {
                     // clear existing target so we don't flood the world with messages
                     //mUDPTarget = null;
                     // send a response to give our IP address and bluetooth ID
@@ -694,6 +754,8 @@ public class GyroServerService extends Service implements SensorEventListener
                 {
                     mUDPLastPingTimes.remove(c);
                     mUDPTargets.remove(c);
+                    mUDPSenders.get(c).close();
+                    mUDPSenders.remove(c);
                 }
             }
         }
@@ -710,25 +772,34 @@ public class GyroServerService extends Service implements SensorEventListener
 
     void sendUDP()
     {
-        if(mUDPTargets.size()!=0)
+        int count=mUDPSenders.size();
+        if(count!=0)
         {
-            for(SocketAddress addr:mUDPTargets)
+            for(int c=0;c<count;c++)
             {
-                try
-                {
-                    int dataLen = mUDPConnection.send(dataByteBuffer, addr);
-                    dataByteBuffer.rewind();
-                } catch(IOException e)
-                {
-                    e.printStackTrace();
-                }
+                mUDPSenders.get(c).copyPacketBuffer(mDataBytes);
             }
         }
+//        if(mUDPTargets.size()!=0)
+//        {
+//            for(SocketAddress addr:mUDPTargets)
+//            {
+//                try
+//                {
+//                    int dataLen = mUDPConnection.send(dataByteBuffer, addr);
+//                    dataByteBuffer.rewind();
+//                } catch(IOException e)
+//                {
+//                    e.printStackTrace();
+//                }
+//            }
+//        }
     }
 
     /******************Sensor processing here (calls to network code above)***********************/
 
     boolean mFirstTime = true;
+    long mTimestampOffset=0;
     long mTimestamp;
     long mLastTimestamp;
     long mLastSendTimestamp;
@@ -912,7 +983,7 @@ public class GyroServerService extends Service implements SensorEventListener
         dataByteBuffer.putFloat(mAngularVelocity * 57.296f);
         dataByteBuffer.putFloat(mMagDirection);
         dataByteBuffer.putFloat(mBattery);
-        dataByteBuffer.putLong(mTimestamp);
+        dataByteBuffer.putLong(mTimestamp+mTimestampOffset);
         dataByteBuffer.flip();
     }
 
@@ -953,33 +1024,33 @@ public class GyroServerService extends Service implements SensorEventListener
         // if time since last network write > 0.01 seconds then send data
         if(mTimestamp - mLastSendTimestamp > 10000000L)
         {
-            if(mTimestamp - mLastTimestamp > 100000000L)
-            {
-                // if we're >10 messages behind, then reset
-                mLastSendTimestamp = mTimestamp;
-            } else
-            {
-                mLastSendTimestamp += 10000000L;
-            }
-//            mLastSendTimestamp=mTimestamp;
+//            if(mTimestamp - mLastTimestamp > 100000000L)
+//            {
+//                // if we're >10 messages behind, then reset
+//                mLastSendTimestamp = mTimestamp;
+//            } else
+//            {
+//                mLastSendTimestamp += 10000000L;
+//            }
+            mLastSendTimestamp=mTimestamp;
             constructBuffer();
             sendBluetooth();
             sendUDP();
         }
-        // check for new connections every 0.1s
-        if(mTimestamp - mLastListenTimestamp > 1000000000L)
+        // check for new connections every .1s
+        if(mTimestamp - mLastListenTimestamp > 100000000L)
         {
             mLastListenTimestamp = mTimestamp;
             listenBluetooth();
             listenUDP();
+        }
+        // send swing info every 1 second
+        if(mTimestamp - mLastPollTimestamp> 1000000000L)
+        {
             if(sWifiNum != -1)
             {
                 ServiceWifiChecker.checkWifi(this, sWifiNum);
             }
-        }
-        // send swing info every 1 second
-        if(mTimestamp - mLastPollTimestamp> 10000000000L)
-        {
             sendSwingInfo();
             mLastPollTimestamp=mTimestamp;
         }
@@ -1017,15 +1088,15 @@ public class GyroServerService extends Service implements SensorEventListener
         if((sConnectionState&3)!=0 && !mReadingSensors)
         {
             connectSensors();
+        }else {
+            mDisconnectedCounter++;
+            mSensorEventHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    disconnectedHandler();
+                }
+            }, 100);
         }
-        mDisconnectedCounter++;
-        mSensorEventHandler.postDelayed(new Runnable(){
-            @Override
-            public void run()
-            {
-                disconnectedHandler();
-            }
-        }, 100);
     }
 
     @Override
