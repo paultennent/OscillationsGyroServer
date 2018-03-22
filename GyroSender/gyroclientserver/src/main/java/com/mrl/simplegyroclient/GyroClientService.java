@@ -16,6 +16,7 @@ import android.content.pm.PackageManager;
 import android.nfc.Tag;
 import android.nfc.tech.IsoDep;
 import android.os.BatteryManager;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.support.v4.app.ActivityCompat;
@@ -63,9 +64,46 @@ public class GyroClientService extends Service
     {
     }
 
+    public static String checkForcedID()
+    {
+        String path = Environment.getExternalStorageDirectory() + "/forceSwingID.txt";
+        File file = new File(path);
+        try
+        {
+            if (file.exists())
+            {
+                BufferedReader br = new BufferedReader(new FileReader(path));
+                String forcedID = br.readLine();
+                if(forcedID!=null)
+                {
+                    forcedID= forcedID.toUpperCase().trim();
+                    if(forcedID.length()>=2)
+                    {
+                        char firstChar=forcedID.charAt(0);
+                        sWifiNum=firstChar-'A';
+                        sSwingNum=Integer.parseInt(forcedID.substring(1));
+                        return forcedID;
+                    }
+                }
+            }
+        } catch(NumberFormatException e)
+        {
+            Log.e("forceID","Bad format of force ID file");
+        }catch(IOException e)
+        {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+
     @Override
     public void onCreate()
     {
+        if(checkForcedID()!=null)
+        {
+            setWifiConnection(this,sWifiNum,sSwingNum);
+        }
         mConnector=new MulticastConnector(this,true,99,99);
         Notification noti = new Notification.Builder(this)
                 .setContentTitle("Gyro Client Service running")
@@ -311,7 +349,7 @@ public class GyroClientService extends Service
                     if(curTime>nextPollTime)
                     {
                         sock.send(pollPacket);
-                        nextPollTime=curTime+10000000L;
+                        nextPollTime=curTime+1000000000L;
                     }
                     // send a messsge back to the server
                     // e.g. to reset the clock
@@ -512,12 +550,17 @@ public class GyroClientService extends Service
             {
                 lastTimestampBT = ByteBuffer.wrap(btPacket).getLong(16);
                 lastTimestampUDP = ByteBuffer.wrap(udpPacket).getLong(16);
-                if(lastTimestampBT > lastTimestampUDP || (connectionState&1)==0)
+                boolean useUDP=true;
+                if(connectionState==2 || (connectionState==3 && lastTimestampBT > lastTimestampUDP))
                 {
-                    dispatchPacket(localConnection, ByteBuffer.wrap(btPacket));
-                }else if(lastTimestampUDP>lastTimestampBT || (connectionState&2)==0)
+                    useUDP=false;
+                }
+                if(useUDP)
                 {
                     dispatchPacket(localConnection, ByteBuffer.wrap(udpPacket));
+                }else
+                {
+                    dispatchPacket(localConnection, ByteBuffer.wrap(btPacket));
                 }
             }
 
@@ -530,7 +573,8 @@ public class GyroClientService extends Service
                 // first 2 bytes
                 if(localMessage.position()>=4)
                 {
-                    int msg = localMessage.getInt();
+                    localMessage.flip();
+                    int msg = localMessage.getInt(0);
                     remoteUDPConnection.setServerMessage(msg);
                 }
             }catch(SocketTimeoutException e)

@@ -76,9 +76,46 @@ public class GyroServerService extends Service implements SensorEventListener
     {
     }
 
+    public static String checkForcedID()
+    {
+        String path = Environment.getExternalStorageDirectory() + "/forceSwingID.txt";
+        File file = new File(path);
+        try
+        {
+            if (file.exists())
+            {
+                BufferedReader br = new BufferedReader(new FileReader(path));
+                String forcedID = br.readLine();
+                if(forcedID!=null)
+                {
+                    forcedID= forcedID.toUpperCase().trim();
+                    if(forcedID.length()>=2)
+                    {
+                        char firstChar=forcedID.charAt(0);
+                        sWifiNum=firstChar-'A';
+                        sSwingID=Integer.parseInt(forcedID.substring(1));
+                        return forcedID;
+                    }
+                }
+            }
+        } catch(NumberFormatException e)
+        {
+            Log.e("forceID","Bad format of force ID file");
+        }catch(IOException e)
+        {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+
     @Override
     public void onCreate()
     {
+        if(checkForcedID()!=null)
+        {
+            setSwingId(this,sSwingID);
+        }
         sConnectionState=0;
         mConnector = new MulticastConnector(this, false,99,99);
         Notification noti = new Notification.Builder(this)
@@ -100,6 +137,7 @@ public class GyroServerService extends Service implements SensorEventListener
 
         multicastLock = wm.createMulticastLock("gyroservermulticastlock");
         multicastLock.acquire();
+
 
         sRunning = true;
         mSensorThread = new HandlerThread("gyrohandler")
@@ -222,8 +260,9 @@ public class GyroServerService extends Service implements SensorEventListener
     BluetoothAdapter mBTAdapter;
     ArrayList<BTConnection> mBTConnections=new ArrayList<BTConnection>();
 
+
     // just send messages at 50hz, last one we have
-    class YhreadedBTSender extends Thread
+    class ThreadedBTSender extends Thread
     {
         byte[] internalBuf;
         void copyPacketBuffer(byte[] buffer)
@@ -235,7 +274,7 @@ public class GyroServerService extends Service implements SensorEventListener
 
         OutputStream mStr;
 
-        public YhreadedBTSender(OutputStream str)
+        public ThreadedBTSender(OutputStream str)
         {
             super("BTOut");
             internalBuf=new byte[PACKET_SIZE];
@@ -278,7 +317,6 @@ public class GyroServerService extends Service implements SensorEventListener
                 {
                     e1.printStackTrace();
                 }
-                mStr = null;
             }
         }
 
@@ -300,10 +338,12 @@ public class GyroServerService extends Service implements SensorEventListener
             }
             synchronized(this)
             {
-                if(mStr != null)
+                try
                 {
                     mStr.close();
-                    mStr = null;
+                } catch(IOException e1)
+                {
+                    e1.printStackTrace();
                 }
             }
         }
@@ -314,14 +354,14 @@ public class GyroServerService extends Service implements SensorEventListener
     {
         public BluetoothSocket mSocket;
         public InputStream mIS;
-        public YhreadedBTSender mOS;
+        public ThreadedBTSender mOS;
 
         public BTConnection(BluetoothSocket sock)
         {
             try
             {
                 mIS=sock.getInputStream();
-                mOS = new YhreadedBTSender(sock.getOutputStream());
+                mOS = new ThreadedBTSender(sock.getOutputStream());
                 mSocket=sock;
             } catch(IOException e)
             {
@@ -650,6 +690,15 @@ public class GyroServerService extends Service implements SensorEventListener
             mUDPConnection.configureBlocking(false);
             mUDPConnection.socket().bind(new InetSocketAddress(UDP_PORT));
             mUDPConnection.socket().setSendBufferSize(PACKET_SIZE*4);
+            while(true)
+            {
+                // read any buffered data until timeout
+                SocketAddress addr = mUDPConnection.receive(dataRead);
+                if(addr==null)
+                {
+                  break;
+                }
+            }
         } catch(IOException e)
         {
             e.printStackTrace();
@@ -710,8 +759,20 @@ public class GyroServerService extends Service implements SensorEventListener
                         switch(dataRead.get(2))
                         {
                             case 1:
-                                // reset clock timestamp
-                                mTimestampOffset=-mTimestamp;
+                                // set clock timestamp to zero and pause it
+                                mTimestampPaused=true;
+                                // paused at start of game state
+                                mGameState=1;
+                                break;
+                            case 2:
+                                // start clock counting up - in game state
+                                // i.e. unpause
+                                mTimestampPaused=false;
+                                mGameState=2;
+                                break;
+                            case 3:
+                                // stopped at end of game state
+                                mGameState=3;
                                 break;
                         }
                     }
@@ -798,7 +859,9 @@ public class GyroServerService extends Service implements SensorEventListener
 
     /******************Sensor processing here (calls to network code above)***********************/
 
+    int mGameState=0;
     boolean mFirstTime = true;
+    boolean mTimestampPaused=false;
     long mTimestampOffset=0;
     long mTimestamp;
     long mLastTimestamp;
@@ -978,9 +1041,14 @@ public class GyroServerService extends Service implements SensorEventListener
 
     public void constructBuffer()
     {
+        if(mTimestampPaused)
+        {
+            // hold timestamp to zero until we are released
+            mTimestampOffset=-mTimestamp;
+        }
         dataByteBuffer.rewind();
         dataByteBuffer.putFloat(mAngle * 57.296f);
-        dataByteBuffer.putFloat(mAngularVelocity * 57.296f);
+        dataByteBuffer.putInt(mGameState);
         dataByteBuffer.putFloat(mMagDirection);
         dataByteBuffer.putFloat(mBattery);
         dataByteBuffer.putLong(mTimestamp+mTimestampOffset);

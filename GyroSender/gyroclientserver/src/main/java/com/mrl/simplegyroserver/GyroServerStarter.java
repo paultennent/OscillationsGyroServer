@@ -2,9 +2,7 @@ package com.mrl.simplegyroserver;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.AlarmManager;
 import android.app.AlertDialog;
-import android.app.PendingIntent;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -29,7 +27,6 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 
-import com.mrl.simplegyroclient.GyroClientService;
 import com.mrl.simplegyroclient.R;
 
 import com.mrl.flashcamerasource.BarcodeReader;
@@ -130,7 +127,10 @@ public class GyroServerStarter extends Activity
             nfcAdapter.setNdefPushMessageCallback(mNDEFCallback,this);
         }
 
-        m_CodeReader.startReading(this);
+        if(GyroServerService.checkForcedID()==null)
+        {
+            m_CodeReader.startReading(this);
+        }
 
         checkServiceStatus();
 
