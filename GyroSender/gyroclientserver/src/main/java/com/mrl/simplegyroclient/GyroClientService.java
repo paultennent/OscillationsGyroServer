@@ -188,6 +188,8 @@ public class GyroClientService extends Service
         InputStream inputStream;
         BluetoothAdapter adp;
         String mAddr;
+        boolean hadData=false;
+
 
         public BTReceiver(BluetoothAdapter adaptor, String addr)
         {
@@ -217,6 +219,7 @@ public class GyroClientService extends Service
                 {
                     // read into our buffer
                     inputStream.read(recvBytes, 0, 24);
+                    hadData=true;
                     lastTime=System.nanoTime();
                     synchronized (currentPacket)
                     {
@@ -290,6 +293,11 @@ public class GyroClientService extends Service
         public long timeSinceLast()
         {
             return System.nanoTime()-lastTime;
+        }
+
+        public boolean receivedAnyPackets()
+        {
+            return hadData;
         }
 
 
@@ -526,7 +534,7 @@ public class GyroClientService extends Service
                     remoteBTConnection=null;
                 }else
                 {
-                    if(remoteBTConnection.timeSinceLast()>1000000000L)
+                    if(remoteBTConnection.timeSinceLast()>1000000000L || remoteBTConnection.receivedAnyPackets()==false)
                     {
                         connectionState&=0xfd;
                     }else {

@@ -223,11 +223,9 @@ public class GyroServerService extends Service implements SensorEventListener
         {
             sensor2 = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         }
-        Sensor sensor3 = sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
 
         boolean success= sm.registerListener(this, sensor, SensorManager.SENSOR_DELAY_FASTEST, mSensorEventHandler);
         success&= sm.registerListener(this, sensor2, SensorManager.SENSOR_DELAY_FASTEST, mSensorEventHandler);
-        success&= sm.registerListener(this, sensor3, SensorManager.SENSOR_DELAY_UI, mSensorEventHandler);
         Log.d("woo", "connected sensors: "+success);
         if(success)
         {
@@ -285,7 +283,7 @@ public class GyroServerService extends Service implements SensorEventListener
         public void run() {
             byte[] buf2 = new byte[PACKET_SIZE];
             try {
-                while (true) {
+                while (!interrupted()) {
                     long startTime = System.nanoTime();
 
                     synchronized (internalBuf) {
@@ -927,12 +925,6 @@ public class GyroServerService extends Service implements SensorEventListener
         //sCorrectionAmountDebug=mAccelCorrectionAmount;
     }
 
-    public void onMagData(SensorEvent event)
-    {
-        SensorManager.getRotationMatrix(mRotationMatrix, null, mAccelLast, event.values);
-        SensorManager.getOrientation(mRotationMatrix, mOrientation);
-        mMagDirection = mOrientation[0] * 57.296f;
-    }
 
     int mAccelDirection = 0;
 
@@ -964,6 +956,14 @@ public class GyroServerService extends Service implements SensorEventListener
             sCorrectionAmountDebug = mAccelCorrectionAmount;
         }
         //mAngle=0.998f*mAngle+0.002f*roll;
+        if(Math.abs(roll)<1.0)
+        {
+            mMagDirection = mOrientation[0] * 57.2957795131f;
+            if(mMagDirection<0)
+            {
+                mMagDirection+=360f;
+            }
+        }
     }
 
     public void onAccelData(SensorEvent event)
@@ -1077,9 +1077,6 @@ public class GyroServerService extends Service implements SensorEventListener
         {
             case Sensor.TYPE_ACCELEROMETER:
                 onAccelData(event);
-                break;
-            case Sensor.TYPE_MAGNETIC_FIELD:
-                onMagData(event);
                 break;
             case Sensor.TYPE_GYROSCOPE:
                 onGyroData(event);
