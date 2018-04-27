@@ -8,16 +8,18 @@ import android.os.IBinder;
 import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
 
-public class BoxUploadService extends Service implements BoxConnector.Callback
+public class BoxUploadService extends Service implements DirectUploader.Callback
 {
-    BoxConnector mConnector;
+    DirectUploader mConnector;
+//    BoxConnector mConnector;
 
     @Override
     public void onCreate()
     {
         super.onCreate();
-        mConnector=new BoxConnector(this,this);
-        mConnector.connectBox();
+        mConnector=new DirectUploader(this,this);
+//        mConnector=new BoxConnector(this,this);
+//        mConnector.connectBox();
     }
 
     @Override

@@ -38,4 +38,5 @@ dependencies {
     compile project(path: ':flashcamerasource')
     compile project(path: ':box-content-sdk')
     compile 'com.eclipsesource.minimal-json:minimal-json:0.9.1'
+    compile 'com.loopj.android:android-async-http:1.4.9'
 }

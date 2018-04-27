@@ -17,16 +17,18 @@ import com.mrl.simplegyroclient.R;
 import java.io.*;
 import java.nio.CharBuffer;
 
-public class BoxUploader extends Activity implements BoxConnector.Callback
+public class BoxUploader extends Activity implements DirectUploader.Callback
 {
-    BoxConnector mConnector;
+    DirectUploader mConnector;
 
     @Override
     protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
-        mConnector=new BoxConnector(this,this);
+        mConnector=new DirectUploader(this,this);
+
         setContentView(R.layout.activity_box_uploader);
+        onStatusChange();
 
         if(ContextCompat.checkSelfPermission(this,
                                              Manifest.permission.WRITE_EXTERNAL_STORAGE)
@@ -54,7 +56,7 @@ public class BoxUploader extends Activity implements BoxConnector.Callback
 
     void connectBox()
     {
-        mConnector.connectBox();
+//        mConnector.connectBox();
     }
 
     public void onClickUploadButton(View view)

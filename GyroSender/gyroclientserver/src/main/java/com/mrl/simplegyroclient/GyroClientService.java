@@ -189,6 +189,7 @@ public class GyroClientService extends Service
         BluetoothAdapter adp;
         String mAddr;
         boolean hadData=false;
+        boolean hasMsg=false;
 
 
         public BTReceiver(BluetoothAdapter adaptor, String addr)
@@ -217,15 +218,26 @@ public class GyroClientService extends Service
                 byte[]recvBytes=new byte[GyroServerService.PACKET_SIZE];
                 while(!interrupted())
                 {
-                    // read into our buffer
-                    inputStream.read(recvBytes, 0, 24);
-                    hadData=true;
-                    lastTime=System.nanoTime();
-                    synchronized (currentPacket)
+                    if(!hasMsg)
                     {
-                        System.arraycopy(recvBytes,0,currentPacket,0,recvBytes.length);
+                        // read into our buffer
+                        inputStream.read(recvBytes, 0, 24);
+                        hadData = true;
+                        lastTime = System.nanoTime();
+                        synchronized (currentPacket)
+                        {
+                            System.arraycopy(recvBytes, 0, currentPacket, 0, recvBytes.length);
+                            hasMsg = true;
+                        }
+                    }else
+                    {
+                        try
+                        {
+                            Thread.sleep(1);
+                        } catch (InterruptedException e)
+                        {
+                        }
                     }
-
                 }
             } catch(IOException e) {
                 Log.d("bt", "can't connect");
@@ -287,6 +299,7 @@ public class GyroClientService extends Service
             synchronized (currentPacket)
             {
                 System.arraycopy(currentPacket,0,buffer,0,currentPacket.length);
+                hasMsg=false;
             }
         }
 
@@ -315,6 +328,8 @@ public class GyroClientService extends Service
         volatile long lastTime;
         volatile int serverMessage;
 
+        boolean hasMsg=false;
+
         public UDPReceiver(SocketAddress addr)
         {
             super("udp:"+addr);
@@ -341,6 +356,8 @@ public class GyroClientService extends Service
 
         public void run()
         {
+            long firstTime=0;
+            float frameCount=0;
             byte[] msgBytes={(byte)72,(byte)105,(byte)0,(byte)0};
             byte[] pollBytes={(byte)72,(byte)105};
             byte[]recvBytes=new byte[GyroServerService.PACKET_SIZE];
@@ -369,13 +386,32 @@ public class GyroClientService extends Service
                         serverMessage=0;
                     }
                     try {
-                        sock.receive(recvPacket);
-
-                        lastTime=System.nanoTime();
-                        // got a packet - set this as the current packet
-                        synchronized (currentPacket)
+                        if(!hasMsg)
                         {
-                            System.arraycopy(recvBytes,0,currentPacket,0,recvBytes.length);
+                            sock.receive(recvPacket);
+                            lastTime = System.nanoTime();
+                            if (firstTime == 0)
+                            {
+                                firstTime = System.nanoTime();
+                            } else
+                            {
+                                frameCount += 1f;
+                                //Log.d("FPS", frameCount *1000000000.0f / (float) (lastTime - firstTime) + "");
+                            }
+                            // got a packet - set this as the current packet
+                            synchronized (currentPacket)
+                            {
+                                hasMsg = true;
+                                System.arraycopy(recvBytes, 0, currentPacket, 0, recvBytes.length);
+                            }
+                        }else
+                        {
+                            try
+                            {
+                                Thread.sleep(1);
+                            } catch (InterruptedException e)
+                            {
+                            }
                         }
                     }catch(SocketTimeoutException e) {
                         // timeout - do nothing
@@ -391,6 +427,7 @@ public class GyroClientService extends Service
             synchronized (currentPacket)
             {
                 System.arraycopy(currentPacket,0,buffer,0,currentPacket.length);
+                hasMsg=false;
             }
         }
 
@@ -442,7 +479,7 @@ public class GyroClientService extends Service
 
         long lastTimestampBT = 0;
         long lastTimestampUDP = 0;
-
+        long lastTimestampSent=0;
 
 
         boolean needsWifiCheck =false;
@@ -558,6 +595,7 @@ public class GyroClientService extends Service
             {
                 lastTimestampBT = ByteBuffer.wrap(btPacket).getLong(16);
                 lastTimestampUDP = ByteBuffer.wrap(udpPacket).getLong(16);
+
                 boolean useUDP=true;
                 if(connectionState==2 || (connectionState==3 && lastTimestampBT > lastTimestampUDP))
                 {
@@ -565,10 +603,18 @@ public class GyroClientService extends Service
                 }
                 if(useUDP)
                 {
-                    dispatchPacket(localConnection, ByteBuffer.wrap(udpPacket));
+                    if(lastTimestampUDP==0 || lastTimestampUDP!=lastTimestampSent)
+                    {
+                        dispatchPacket(localConnection, ByteBuffer.wrap(udpPacket));
+                    }
+                    lastTimestampSent=lastTimestampUDP;
                 }else
                 {
-                    dispatchPacket(localConnection, ByteBuffer.wrap(btPacket));
+                    if(lastTimestampBT==0 || lastTimestampBT!=lastTimestampSent)
+                    {
+                        dispatchPacket(localConnection, ByteBuffer.wrap(btPacket));
+                    }
+                    lastTimestampSent=lastTimestampBT;
                 }
             }
 
@@ -590,12 +636,13 @@ public class GyroClientService extends Service
                 // no message
             }
             catch (IOException e) {
-                e.printStackTrace();
+//                e.printStackTrace();
             }
 
-            // sleep for 100th second
+            // sleep for 400th second
             long elapsedNanos = System.nanoTime() - startTime;
-            long sleepNanos = 10000000L - elapsedNanos;
+            long sleepNanos =    2500000L - elapsedNanos;
+//            long sleepNanos = 10000000L - elapsedNanos;
             if (sleepNanos > 0) {
                 long sleepMillis = sleepNanos / 1000000L;
                 sleepNanos -= sleepMillis * 1000000L;
