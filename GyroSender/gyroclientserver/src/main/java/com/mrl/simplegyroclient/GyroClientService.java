@@ -3,6 +3,7 @@ package com.mrl.simplegyroclient;
 
 import android.Manifest;
 import android.app.Notification;
+import android.app.NotificationManager;
 import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -221,7 +222,7 @@ public class GyroClientService extends Service
                     if(!hasMsg)
                     {
                         // read into our buffer
-                        inputStream.read(recvBytes, 0, 24);
+                        inputStream.read(recvBytes, 0, GyroServerService.PACKET_SIZE);
                         hadData = true;
                         lastTime = System.nanoTime();
                         synchronized (currentPacket)
@@ -327,6 +328,7 @@ public class GyroClientService extends Service
         final byte[] currentPacket;
         volatile long lastTime;
         volatile int serverMessage;
+        volatile boolean versionMismatch=false;
 
         boolean hasMsg=false;
 
@@ -389,6 +391,10 @@ public class GyroClientService extends Service
                         if(!hasMsg)
                         {
                             sock.receive(recvPacket);
+                            if(recvPacket.getLength()!=GyroServerService.PACKET_SIZE)
+                            {
+                                versionMismatch=true;
+                            }
                             lastTime = System.nanoTime();
                             if (firstTime == 0)
                             {
@@ -396,7 +402,6 @@ public class GyroClientService extends Service
                             } else
                             {
                                 frameCount += 1f;
-                                //Log.d("FPS", frameCount *1000000000.0f / (float) (lastTime - firstTime) + "");
                             }
                             // got a packet - set this as the current packet
                             synchronized (currentPacket)
@@ -435,6 +440,8 @@ public class GyroClientService extends Service
         {
             serverMessage=msg;
         }
+
+        public boolean seenWrongVersion(){return versionMismatch;}
     }
 
     public void serverThread()
@@ -589,6 +596,16 @@ public class GyroClientService extends Service
                 {
                     connectionState|=1;
                 }
+                if(remoteUDPConnection.seenWrongVersion())
+                {
+                    NotificationManager mNotificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                    Notification noti = new Notification.Builder(this)
+                            .setContentTitle("WARNING")
+                            .setContentText("OLD VERSION OF SIMPLEGYROSERVER")
+                            .setSmallIcon(R.mipmap.ic_launcher)
+                            .build();
+                    mNotificationManager.notify(1, noti);
+                }
                 remoteUDPConnection.getCurrentBytes(udpPacket);
             }
             if((connectionState&3)!=0)
@@ -703,8 +720,8 @@ public class GyroClientService extends Service
             batteryPercent = level / (float) scale;
         }
 
-        dataPacket.putFloat(24, batteryPercent);
-        dataPacket.putInt(28, sConnectionState);
+        dataPacket.putFloat(GyroServerService.PACKET_SIZE, batteryPercent);
+        dataPacket.putInt(GyroServerService.PACKET_SIZE+4, sConnectionState);
         try
         {
             dataPacket.rewind();

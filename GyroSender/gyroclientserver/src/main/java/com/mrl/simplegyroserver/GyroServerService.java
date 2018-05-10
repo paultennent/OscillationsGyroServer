@@ -43,7 +43,7 @@ public class GyroServerService extends Service implements SensorEventListener
     public static String mBluetoothMAC;
 
     final static public int UDP_PORT = 2323;
-    final static public int PACKET_SIZE = 24;
+    final static public int PACKET_SIZE = 28;
     final static public UUID BLUETOOTH_UUID =
             UUID.fromString("ad91f8d4-e6ea-4f57-be70-4f9802ebc619");
 
@@ -873,6 +873,7 @@ public class GyroServerService extends Service implements SensorEventListener
     float mAngularVelocity = 0;
     float mBattery = 0.5f;
     float mMagDirection = 0;
+    float mSwingTip=0;
     boolean mUpdateAccelAngle = false;
     float mAccelCorrectionAmount = 0;
 
@@ -964,6 +965,7 @@ public class GyroServerService extends Service implements SensorEventListener
                 mMagDirection+=360f;
             }
         }
+        mSwingTip=((mOrientation[2]* 57.2957795131f+360f)%360f) - 180f;
     }
 
     public void onAccelData(SensorEvent event)
@@ -1052,6 +1054,7 @@ public class GyroServerService extends Service implements SensorEventListener
         dataByteBuffer.putFloat(mMagDirection);
         dataByteBuffer.putFloat(mBattery);
         dataByteBuffer.putLong(mTimestamp+mTimestampOffset);
+        dataByteBuffer.putFloat(mSwingTip);
         dataByteBuffer.flip();
     }
 
