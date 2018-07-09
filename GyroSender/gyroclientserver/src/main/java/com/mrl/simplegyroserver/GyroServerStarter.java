@@ -129,6 +129,7 @@ public class GyroServerStarter extends Activity
 
         if(GyroServerService.checkForcedID()==null)
         {
+            ServiceWifiChecker.forgetWifi(this);
             m_CodeReader.startReading(this);
         }
 
@@ -250,12 +251,21 @@ public class GyroServerStarter extends Activity
         if(m_CodeReader.isReading())
         {
 
+            int wifiNum=GyroServerService.getPreviousWIFINum(this);
+            if(wifiNum!=-1)
+            {
+                findViewById(R.id.reconnect_button).setVisibility(View.VISIBLE);
+            }else
+            {
+                findViewById(R.id.reconnect_button).setVisibility(View.INVISIBLE);
+            }
             findViewById(R.id.barcode).setVisibility(View.VISIBLE);
             findViewById(R.id.launch_button).setVisibility(View.INVISIBLE);
             findViewById(R.id.status_text).setVisibility(View.INVISIBLE);
             findViewById(R.id.info_text).setVisibility(View.INVISIBLE);
         }else
         {
+            findViewById(R.id.reconnect_button).setVisibility(View.INVISIBLE);
             findViewById(R.id.barcode).setVisibility(View.INVISIBLE);
             findViewById(R.id.launch_button).setVisibility(View.VISIBLE);
             findViewById(R.id.status_text).setVisibility(View.VISIBLE);
@@ -301,6 +311,31 @@ public class GyroServerStarter extends Activity
         super.onDestroy();
     }
 
+    public void onClickPreviousSwingButton(View view)
+    {
+        int wifiNum=GyroServerService.getPreviousWIFINum(this);
+        if(wifiNum!=-1)
+        {
+            m_CodeReader.stopReading();
+            GyroServerService.setWifiNum(this, wifiNum);
+            if (!GyroServerService.sRunning)
+            {
+                onClickLaunchButton(null);
+            }
+        }
+    }
+
+    public void onClickForgetButton(View view)
+    {
+        if(GyroServerService.sRunning)
+        {
+            onClickLaunchButton(null);
+            GyroServerService.setWifiNum(this,-1);
+        }
+        ServiceWifiChecker.forgetWifi(this);
+    }
+
+
     public void onClickLaunchButton(View view)
     {
         if(!GyroServerService.sRunning)
@@ -311,8 +346,16 @@ public class GyroServerStarter extends Activity
                 Intent intent= new Intent(getBaseContext(), com.mrl.simplegyroclient.GyroClientService.class);
                 stopService(intent);
             }
-            Intent intent= new Intent(getBaseContext(), GyroServerService.class);
-            startService(intent);
+            int wifiNum=GyroServerService.getPreviousWIFINum(this);
+            if(wifiNum!=-1)
+            {
+                Intent intent = new Intent(getBaseContext(), GyroServerService.class);
+                startService(intent);
+            }else
+            {
+                ServiceWifiChecker.forgetWifi(this);
+                m_CodeReader.startReading(this);
+            }
         }else
         {
             Intent intent= new Intent(getBaseContext(), GyroServerService.class);

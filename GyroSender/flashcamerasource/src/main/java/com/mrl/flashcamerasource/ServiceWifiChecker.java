@@ -6,6 +6,7 @@ import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Environment;
+import android.widget.Toast;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -101,10 +102,40 @@ public class ServiceWifiChecker
             return lastResponse;
         }
         lastResponse=false;
+
+
         if(connectedSSID.compareTo(quotedSSID)==0)
         {
             // connecting to the right ssid, just wait until connected right
-            return lastResponse;
+
+            boolean foundConfig=false;
+            // check that we have this network saved still
+            // - if there are no other known networks, it will report the right name above
+            // but then it will die here, because it will never connect to a non saved network
+            List<WifiConfiguration> currentNetworks = wifiManager.getConfiguredNetworks();
+            if(currentNetworks!=null)
+            {
+                for (WifiConfiguration config : currentNetworks)
+                {
+                    String savedNetSsid = config.SSID;
+                    if (savedNetSsid.compareToIgnoreCase(quotedSSID) == 0)
+                    {
+                        // this is the network we want and it is configured already
+                        wifiManager.enableNetwork(config.networkId, true);
+                        foundConfig=true;
+                        wifiManager.saveConfiguration();
+                        break;
+                    }
+                }
+            }
+            if(!foundConfig)
+            {
+                connectedSSID="";
+            }else
+            {
+                return lastResponse;
+            }
+
         }
 
 
@@ -259,5 +290,39 @@ public class ServiceWifiChecker
             wifiIPAddress(ctx);
         }
         return broadcastIP;
+    }
+
+    public static void forgetWifi(Context ctx)
+    {
+        WifiManager wifiManager = (WifiManager) ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        boolean changedConfig=false;
+        for(int c = 0; c < wifiPoints.size(); c++)
+        {
+            String compareSSID = String.format("\"%s\"", wifiPoints.get(c));
+            List<WifiConfiguration> currentNetworks = wifiManager.getConfiguredNetworks();
+            if(currentNetworks!=null)
+            {
+                for(WifiConfiguration config : currentNetworks)
+                {
+                    String savedNetSsid = config.SSID;
+                    if(savedNetSsid.compareToIgnoreCase(compareSSID) == 0)
+                    {
+                        // this is our network - get rid of it
+                        boolean retVal = wifiManager.removeNetwork(config.networkId);
+                        if(retVal == false)
+                        {
+                            // WHAT?
+                            Toast.makeText(ctx, "Can't remove old network", Toast.LENGTH_SHORT);
+                        }
+                        changedConfig=true;
+                    }
+                }
+            }
+        }
+        if(changedConfig)
+        {
+            wifiManager.saveConfiguration();
+            Toast.makeText(ctx, "WIFI networks removed", Toast.LENGTH_SHORT);
+        }
     }
 }

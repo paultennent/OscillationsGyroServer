@@ -28,4 +28,13 @@
         android:layout_alignParentStart="true"
         android:layout_marginTop="10dp"
         android:id="@+id/status_text"/>
+
+    <Button
+        android:id="@+id/forgetButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignEnd="@+id/launch_button"
+        android:layout_alignParentBottom="true"
+        android:text="Forget current connection"
+        android:onClick="onClickForgetButton"/>
 </RelativeLayout>

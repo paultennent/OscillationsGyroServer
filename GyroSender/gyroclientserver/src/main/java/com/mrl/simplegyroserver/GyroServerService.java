@@ -1180,7 +1180,7 @@ public class GyroServerService extends Service implements SensorEventListener
             SharedPreferences settings = ctx.getSharedPreferences(PREFS_NAME, 0);
             mBluetoothMAC = settings.getString("BluetoothMAC", null);
         }
-        if(mBluetoothMAC == null)
+        if(mBluetoothMAC == null || mBluetoothMAC.length()==0)
         {
             String path = Environment.getExternalStorageDirectory() + "/btmac.txt";
             File file = new File(path);
@@ -1238,6 +1238,17 @@ public class GyroServerService extends Service implements SensorEventListener
     public static void setWifiNum(Context ctx, int num)
     {
         sWifiNum = num;
+
+        SharedPreferences settings = ctx.getSharedPreferences(PREFS_NAME, 0);
+        SharedPreferences.Editor edit = settings.edit();
+        edit.putInt("PreviousWIFINum", num);
+        edit.commit();
+    }
+
+    public static int getPreviousWIFINum(Context ctx)
+    {
+        SharedPreferences settings = ctx.getSharedPreferences(PREFS_NAME, 0);
+        return settings.getInt("PreviousWIFINum", -1);
     }
 
     public static int getWifiNum(Context ctx)

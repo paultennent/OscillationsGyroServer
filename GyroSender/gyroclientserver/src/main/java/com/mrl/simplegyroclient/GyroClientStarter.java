@@ -23,6 +23,7 @@ import android.widget.TextView;
 
 import com.mrl.flashcamerasource.BarcodeReader;
 import com.mrl.flashcamerasource.ClientWifiSelector;
+import com.mrl.flashcamerasource.ServiceWifiChecker;
 
 import java.io.UnsupportedEncodingException;
 import java.util.Locale;
@@ -149,6 +150,20 @@ public class GyroClientStarter extends Activity implements NfcAdapter.ReaderCall
     }
 
 
+
+    public void onClickForgetButton(View view)
+    {
+        if(GyroClientService.sRunning)
+        {
+            Intent intent= new Intent(getBaseContext(), GyroClientService.class);
+            stopService(intent);
+        }
+        // forget the wifi
+        GyroClientService.setWifiConnection(this,-1,-1);
+        ServiceWifiChecker.forgetWifi(this);
+
+
+    }
     public void onClickLaunchButton(View view)
     {
         if(!GyroClientService.sRunning)

@@ -59,5 +59,26 @@
         android:id="@+id/barcode"
         />
 
+    <Button
+        android:id="@+id/reconnect_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignBottom="@+id/launch_button"
+        android:layout_alignParentEnd="true"
+        android:text="Connect previous swing"
+        android:onClick="onClickPreviousSwingButton"
+
+        />
+    <Button
+        android:id="@+id/forgetButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignEnd="@+id/launch_button"
+        android:layout_alignParentBottom="true"
+        android:text="Forget current connection"
+        android:onClick="onClickForgetButton"/>
+
+
+
 
 </RelativeLayout>
